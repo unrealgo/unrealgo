@@ -1,0 +1,12 @@
+# for client selfplay config
+host=unrealgo.com
+svr_port=8888
+evalstatserverport=6000
+metasubpath=gonet-model/meta/optimized_graph.pb
+latestckfilesubpath=gonet-model/checkpoint/checkpoint
+checkdatabucket=gonet-model
+bestckinfosubpath=checkpoint/bestcheckpoint.info
+latestckinfosubpath=checkpoint/latestcheckpoint.info
+checkevalsubpath=checkpoint/checkpointevalresult.txt"
+
+checkdatasubpath=gonet-model/checkpoint

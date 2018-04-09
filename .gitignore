@@ -1,0 +1,9 @@
+.idea/
+bin/
+bootstrap/
+cmake-build-release/
+cmake-build-debug
+cmake-build-relwithdebinfo/
+cmake-build-default/
+cmake-build-minsizerel/
+
