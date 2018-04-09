@@ -64,15 +64,16 @@ $ make -j4
 Run UnrealGo
 ===========
 The binary is installed at $PROJ_WORKSPACE/unrealgo/bin.
-To run unrealgo, the network checkpoint(weights) is needed. A bootstrap checkpoint of 20 residual block is provided, download
-and decompress to dir bin/.
+To run unrealgo, the network checkpoint(weights) is needed. A bootstrap checkpoint of 20 residual block is provided,
+decompress and copy to bin/
 
 ```
 # first     copy config/dlcfg-19 to bin/
 $ cd $PROJ_WORKSPACE/
 $ cp config/dlcfg-19 bin/
 
-$ cd bin/
+$ tar xvf bootstrap.tar.gz
+$ mv bootstrap-ckpt.* bin/
 
 # start unrealgo, type selfplay to start self play.
 $ ./unrealgo
