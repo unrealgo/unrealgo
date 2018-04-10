@@ -1,7 +1,7 @@
 UnrealGo
 ===========
 
-UnrealGo is a reference implementation of [alphagoZero](https://deepmind.com/blog/alphago-zero-learning-scratch/) in C++. It's developed with MCTS
+UnrealGo is a experimental implementation of [alphagoZero](https://deepmind.com/blog/alphago-zero-learning-scratch/) in C++. It's developed with MCTS
 and deep reinforcement learning. It can be trained from scratch.
 
 Dependencies
