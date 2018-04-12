@@ -225,7 +225,6 @@ UctDeepTrainer::UctDeepTrainer(const GoGame &game, GoRules &rules) :
     m_evalPath("eval") {
 
   m_evalres_socket.connect(DlConfig::GetInstance().get_evalstatconnect_socket());
-  m_send_socket.connect(DlConfig::GetInstance().get("deeptrainertraindataconsocket"));
 
   UnrealGo::CreatePath(0777, m_evalPath, "/");
 }
@@ -449,6 +448,8 @@ bool UctDeepTrainer::BoardConsistent() {
 
 void UctDeepTrainer::SelfPlayGamesServerMode() {
   if (m_selfplay) {
+    m_send_socket.connect(DlConfig::GetInstance().get("deeptrainertraindataconsocket"));
+
     m_trainer.SetLogReuse(true);
     std::string path = m_trainer.SelfPlayAsServer(m_roundID);
     if (path[0] != '/') {
@@ -463,6 +464,7 @@ void UctDeepTrainer::SelfPlayGamesServerMode() {
       m_evalThread->NotifyExecuteCommand();
 
     m_roundID++;
+    m_send_socket.disconnect(DlConfig::GetInstance().get("deeptrainertraindataconsocket"));
   }
 }
 

@@ -69,7 +69,7 @@ To run unrealgo, the network checkpoint(weights) is needed. A bootstrap checkpoi
 decompress and copy to bin/
 
 ```
-# first     copy config/dlcfg-19 to bin/
+# first copy config/dlcfg-19 to bin/
 $ cd $PROJ_WORKSPACE/
 $ cp config/dlcfg-19 bin/
 
