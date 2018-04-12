@@ -40,6 +40,7 @@ $ git clone https://github.com/tensorflow/tensorflow.git
 # git checkout to desired version(e.g. 1.6) if you like
 
 # build interface
+$ cd $PROJ_WORKSPACE
 $ git clone https://github.com/unrealgo/tensorflow_cmake_interface.git
 $ cd tensorflow_cmake_interface
 $ mkdir build
