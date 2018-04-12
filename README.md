@@ -88,10 +88,20 @@ GUI
 $ git clone https://github.com/SabakiHQ/Sabaki.git
 $ cd Sabaki/dist/linux-unpacked
 $ ./sabaki
+# after sabaki is started, select [Engines]->[Attach] to attach unrealgo binary.
 ```
+
+Neural Network Training
+===========
+The hard part is neural network training.  UnrealGo run in client mode by default, allowing user to run command 'selfplay' or 'clienteval'
+1. command 'selfplay' executes mcts search by single player with identical network weight
+2. command 'clienteval' executes mcts search by two players with different network weights.<br>
+
+The generated selfplay data or evaluation result will be synced to server for training/update.
 
 TODO
 ===========
+Build training server<br>
 Network compression
 
 License
