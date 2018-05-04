@@ -99,11 +99,6 @@ The hard part is neural network training.  UnrealGo run in client mode by defaul
 
 The generated selfplay data or evaluation result will be synced to server for training/update.
 
-TODO
-===========
-Build training server<br>
-Network compression
-
 License
 ===========
 UnrealGo is licensed under GPLv3 or later.
