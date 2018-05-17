@@ -319,32 +319,32 @@ void DlTFNetworkEvaluator<T>::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE
 
 template <typename T>
 void DlTFNetworkEvaluator<T>::Evaluate(char feature[][BD_SIZE][BD_SIZE][NUM_MAPS],
-                                       double policies_[][GO_MAX_MOVES], double value_[], int batch_size) {
-  Tensor feature_tensor(DT_BOOL, TensorShape({batch_size, FEATURE_SIZE}));
-  auto matrix = feature_tensor.matrix<bool>();
-  for (int i = 0; i < batch_size; ++i) {
-    for (int j = 0; j < FEATURE_SIZE; ++j) {
-      matrix(i, j) = (bool)((char*)feature[i])[j];
-    }
-  }
+                                       double policies_[][GO_MAX_MOVES], double value_[], int numBatches) {
+  if (m_input_tensors[numBatches - 1].dim_size(0) != numBatches)
+    CreateTensor(numBatches);
 
+  TransformFeature(feature, numBatches);
   std::vector<Tensor> outputs;
-  Status run_status = m_session->Run({{input_name, feature_tensor}}, m_outputs, {}, &outputs);
+  string input_layer = input_name;
+  Status run_status = m_session->Run({{input_layer, m_input_tensors[numBatches - 1]}}, m_outputs, {}, &outputs);
 
   if (run_status.ok() && outputs.size() >= 2) {
-    auto policy_tensor = outputs[0].matrix<float>();
-    auto value_tensor  = outputs[1].flat<float>();
-    for (int i = 0; i < batch_size; ++i) {
-      for (int j = 0; j < GO_MAX_MOVES; ++j) {
-        policies_[i][j] = policy_tensor(i, j);
-      }
-      value_[i] = -value_tensor(i);
+    DlTensorUtil<float>::GetValue(outputs[0], policies_[0], GO_MAX_MOVES * numBatches);
+    DlTensorUtil<float>::GetValue(outputs[1], value_, numBatches);
+    ValueTransformType vt = DlConfig::GetInstance().get_value_transform();
+    switch (vt) {
+      case TR_FLIP_SIGN:
+        for (int i=0; i<numBatches; ++i)
+          value_[i] = - value_[i];
+        break;
+      case TR_FLIP_PROB:
+        for (int i=0; i<numBatches; ++i)
+          value_[i] = 1 - value_[i];
+        break;
     }
-//    DlTensorUtil<float>::GetValue(outputs[0], policies_[0], GO_MAX_MOVES * batch_size);
-//    DlTensorUtil<float>::GetValue(outputs[1], value_, batch_size);
 #ifdef CHECK_EVAL_RESULT
-    CheckPolicies(policies_, batch_size);
-    ///CheckRange(value_, batch_size, -1, 1);
+    ///CheckPolicies(policies_, numBatches);
+    ///CheckRange(value_, numBatches, -1, 1);
 #endif
   } else {
     LOG(ERROR) << "Running model failed: " << run_status;
@@ -404,7 +404,7 @@ void DlTFNetworkEvaluator<T>::TransformFeature(char feature[][BD_SIZE][BD_SIZE][
           else if (m_dataFormat == DF_CHW)
             index = UnrealGo::ArrayUtil::GetOffset({numBatches, NUM_MAPS, BD_SIZE, BD_SIZE}, 4,
                                                    {batchID, depth, i, j});
-          data[index] = (T)feature[batchID][depth][i][j];
+          data[index] = (T)feature[batchID][i][j][depth];
         }
       }
     }
