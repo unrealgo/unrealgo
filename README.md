@@ -80,6 +80,19 @@ $ mv bootstrap-ckpt.* bin/
 $ ./unrealgo
  selfplay
 ```
+Config
+=============
+meta_graph: path to metagraph <br>
+checkpoint: prefix of checkpoint files <br>
+nn_input: input name of the model inputs <br>
+nn_outputs: policy:value name pairs of the model outputs <br>
+value_transform: transform method for network value output <br>
+```
+0: v = v
+1: v = -v
+2: v = 1-v
+```
+reuse_searchtree: whether to reuse search
 
 GUI
 =============
