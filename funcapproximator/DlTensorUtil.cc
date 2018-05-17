@@ -3,6 +3,7 @@
 #include <tensorflow/cc/framework/scope.h>
 #include <google/tensorflow/tensorflow/cc/ops/math_ops.h>
 #include <google/tensorflow/tensorflow/cc/ops/array_ops.h>
+#include "platform/SgSystem.h"
 #include "DlTensorUtil.h"
 
 using namespace tensorflow;
@@ -11,8 +12,12 @@ template
 class DlTensorUtil<float>;
 template
 class DlTensorUtil<char>;
+template
+class DlTensorUtil<bool>;
 
 static void Deallocator(void* data, size_t, void* arg) {
+  SuppressUnused(data);
+  SuppressUnused(arg);
   // TODO fixme is it necessary here? sometimes "Process finished with exit code 139 (interrupted by signal 11: SIGSEGV" is met
 //  tensorflow::cpu_allocator()->DeallocateRaw(data);
 //  *reinterpret_cast<bool *>(arg) = true;

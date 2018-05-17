@@ -12,11 +12,11 @@
 #include "network/AtomCurl.h"
 #include "msg/MinioStub.h"
 
-const static int MAX_SEARCH_ITERATIONS = 1600;
+const static int MAX_SEARCH_ITERATIONS = 4000;
 const static int SELF_PLAY_GAMES = 2;
 
 UctDeepPlayer::UctDeepPlayer(GoGame& game, GoRules& rules) : GoPlayer(game.Board()),
-                                                             m_logReuse(false),
+                                                             m_logReuse(true),
                                                              m_search(
                                                                  Board(),
                                                                  new GoUctPlayoutPolicyFactory<GoUctBoard>(
@@ -145,6 +145,7 @@ void UctDeepPlayer::TryInitNeuralNetwork() {
   if (gotCheckPoint)
     m_search.UpdateCheckPoint(m_bestCheckPoint.name);
 }
+
 std::string UctDeepPlayer::SelfPlayAsServer(int roundID) {
   m_game.UpdateGameName("self-play games-multi-threaded");
   m_game.UpdatePlayerName(SG_BLACK, APP_NAME "-black-mt");
@@ -218,6 +219,7 @@ GoPoint UctDeepPlayer::GenMove(const SgTimeRecord& timeRecord, SgBlackWhite toPl
   return move;
 }
 
+
 void UctDeepPlayer::FindInitTree(UctSearchTree& initTree, SgBlackWhite toPlay, double maxTime) {
   Board().SetToPlay(toPlay);
   std::vector<GoPoint> sequence;
@@ -230,6 +232,8 @@ void UctDeepPlayer::FindInitTree(UctSearchTree& initTree, SgBlackWhite toPlay, d
 #ifdef CHECKTREECONSISTENCY
   bool initTreeConsistent = UctTreeUtil::CheckTreeConsistency(initTree, initTree.Root());
   bool treeConsistent = UctTreeUtil::CheckTreeConsistency(m_search.Tree(), m_search.Tree().Root());
+  DBG_ASSERT(initTreeConsistent);
+  DBG_ASSERT(treeConsistent);
 #endif
   const size_t initTreeNodes = initTree.NuNodes();
   const size_t oldTreeNodes = m_search.Tree().NuNodes();
@@ -237,8 +241,7 @@ void UctDeepPlayer::FindInitTree(UctSearchTree& initTree, SgBlackWhite toPlay, d
     const float reuse = float(initTreeNodes) / float(oldTreeNodes);
     if (m_logReuse) {
       auto reusePercent = static_cast<int>(100 * reuse);
-      SgDebug() << "DeepPlayer: Reusing " << initTreeNodes
-                << " nodes (" << reusePercent << "%)\n";
+      SgDebug() << "DeepPlayer: Reusing " << initTreeNodes << " nodes (" << reusePercent << "%)\n";
     }
     m_statistics.m_reuse.Add(reuse);
   } else {
@@ -253,6 +256,19 @@ void UctDeepPlayer::FindInitTree(UctSearchTree& initTree, SgBlackWhite toPlay, d
         DBG_ASSERT(false);
       }
   }
+}
+
+void UctDeepPlayer::OnOppMove(GoMove move, SgBlackWhite color) {
+  std::string moveInfo = GoPointUtil::ToStringFull(move);
+  SgBlackWhite bdToPlay = Board().ToPlay();
+  std::string lastMove = GoPointUtil::ToStringFull(Board().GetLastMove());
+  const GoBoard& threadBD = m_search.ThreadState(0).Board();
+  SgBlackWhite threadToPlay = threadBD.ToPlay();
+  std::string threadLastMove = GoPointUtil::ToStringFull(threadBD.GetLastMove());
+
+  SuppressUnused(bdToPlay);
+  SuppressUnused(threadToPlay);
+  SuppressUnused(color);
 }
 
 void UctDeepPlayer::SyncState(GoMove move, SgBlackWhite color) {
@@ -274,15 +290,18 @@ GoPoint UctDeepPlayer::DoSearch(SgBlackWhite toPlay, double maxTime, double tau,
   UctSearchTree* initTree = nullptr;
   SgTimer timer;
   double timeInitTree = 0;
-  if (m_reuseSubtree) {
+  if (DlConfig::GetInstance().reuse_search_tree()) {
     initTree = &m_search.GetTempTree();
     timeInitTree = -timer.GetTime();
     FindInitTree(*initTree, toPlay, maxTime);
     timeInitTree += timer.GetTime();
-  }
+
 #ifdef CHECKTREECONSISTENCY
-  DBG_ASSERT(UctTreeUtil::CheckTreeConsistency(*initTree, initTree->Root()));
+    if (initTree != nullptr)
+      DBG_ASSERT(UctTreeUtil::CheckTreeConsistency(*initTree, initTree->Root()));
 #endif
+  }
+
   std::vector<GoMove> rootFilter;
   maxTime -= timer.GetTime();
   ((GoUctGlobalSearchType&)m_search).SetToPlay(toPlay);
@@ -309,7 +328,7 @@ GoPoint UctDeepPlayer::DoSearch(SgBlackWhite toPlay, double maxTime, double tau,
     out << SgWriteLabel("Value") << std::fixed << std::setprecision(2)
         << value << '\n' << SgWriteLabel("Sequence")
         << SgWritePointList(sequence, "", false);
-    if (m_reuseSubtree)
+    if (DlConfig::GetInstance().reuse_search_tree())
       out << SgWriteLabel("TimeInitTree") << std::fixed
           << std::setprecision(2) << timeInitTree << '\n';
     SgDebug() << out.str();

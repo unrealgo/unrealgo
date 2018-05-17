@@ -91,8 +91,7 @@ class GoUctCommands {
   void CompareMove(GtpCommand &cmd, GoUctCompareMoveType type);
   void DisplayKnowledge(GtpCommand &cmd, bool additiveKnowledge);
   void DisplayMoveInfo(GtpCommand &cmd,
-                       const std::vector<UctMoveInfo> &moves,
-                       bool additiveKnowledge);
+                       const std::vector<UctMoveInfo> &moves);
   UctValueType DisplayTerritory(GtpCommand &cmd, MeanMapperFunction f);
   GoPointSet DoFinalStatusSearch();
   inline const GoGame &Game();

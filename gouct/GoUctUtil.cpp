@@ -41,16 +41,6 @@ void SaveNode(std::ostream &out, const UctSearchTree &tree, const UctNode &node,
     out << "]\n";
     return;
   }
-  out << "\n\nRave:";
-  for (UctChildNodeIterator it(tree, node); it; ++it) {
-    const UctNode &child = *it;
-    GoPoint move = child.Move();
-    if (child.HasRaveValue()) {
-      out << '\n' << GoWritePoint(move) << ' '
-          << fixed << setprecision(2) << child.RaveValue()
-          << " (" << child.RaveCount() << ')';
-    }
-  }
   out << "]\nLB";
   for (UctChildNodeIterator it(tree, node); it; ++it) {
     const UctNode &child = *it;

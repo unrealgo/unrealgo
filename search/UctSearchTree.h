@@ -21,18 +21,12 @@ struct UctMoveInfo {
   UctValueType uct_w;
   UctValueType uct_Q;
   UctValueType uct_prior;
-  UctValueType visit_count;
-  UctValueType rave_value;
-  UctValueType rave_cnt;
-  float predictor_val;
+  int visit_count;
 
   UctMoveInfo();
   explicit UctMoveInfo(GoMove move);
-
-  UctMoveInfo(GoMove move, UctValueType value, UctValueType count,
-                UctValueType raveValue, UctValueType raveCount);
+  UctMoveInfo(GoMove move, UctValueType value, int count);
   void Add(const UctValueType mean, const UctValueType count);
-  void AddValue(const UctValueType value, const UctValueType count);
   void SetActionProb(const UctValueType prob);
 
 };
@@ -44,10 +38,7 @@ inline UctMoveInfo::UctMoveInfo()
       uct_w(0),
       uct_Q(0),
       uct_prior(0),
-      visit_count(0),
-      rave_value(0),
-      rave_cnt(0),
-      predictor_val(0.0) {}
+      visit_count(0) {}
 
 inline UctMoveInfo::UctMoveInfo(GoMove move)
     : uct_move(move),
@@ -55,22 +46,15 @@ inline UctMoveInfo::UctMoveInfo(GoMove move)
       uct_w(0),
       uct_Q(0),
       uct_prior(0),
-      visit_count(0),
-      rave_value(0),
-      rave_cnt(0),
-      predictor_val(0.0) {}
+      visit_count(0) {}
 
-inline UctMoveInfo::UctMoveInfo(GoMove move, UctValueType value, UctValueType count,
-                                    UctValueType raveValue, UctValueType raveCount)
+inline UctMoveInfo::UctMoveInfo(GoMove move, UctValueType value, int count)
     : uct_move(move),
       uct_value(value),
       uct_w(0),
       uct_Q(0),
       uct_prior(0),
-      visit_count(count),
-      rave_value(raveValue),
-      rave_cnt(raveCount),
-      predictor_val(0.0) {}
+      visit_count(count) {}
 
 inline void UctMoveInfo::Add(const UctValueType mean, const UctValueType count) {
   visit_count += count;
@@ -79,14 +63,6 @@ inline void UctMoveInfo::Add(const UctValueType mean, const UctValueType count) 
   v2 -= v1;
   v1 += (v2 * count) / visit_count;
   uct_value = UctValueUtil::InverseValue(v1);
-
-  rave_cnt = visit_count;
-  rave_value = v1;
-}
-inline void UctMoveInfo::AddValue(const UctValueType value, const UctValueType count) {
-  visit_count += count;
-  uct_w += value * count;
-  uct_Q = uct_w / visit_count;
 }
 
 inline void UctMoveInfo::SetActionProb(const UctValueType prob) {
@@ -104,11 +80,6 @@ class UctNode {
  public:
   explicit UctNode(const UctMoveInfo &info, const UctNode *parent = 0);
   explicit UctNode(GoMove move, const UctNode *parent = 0);
-  void AddGameResult(UctValueType eval);
-  void AddGameResults(UctValueType eval, UctValueType count);
-  void MergeResults(const UctNode &node);
-  void RemoveGameResult(UctValueType eval);
-  void RemoveGameResults(UctValueType eval, UctValueType count);
   UctValueType PosCount() const;
   UctValueType VisitCount() const;
   UctValueType MoveCount() const;
@@ -119,31 +90,15 @@ class UctNode {
   size_t NumChildren() const;
   void SetFirstChild(const UctNode *child);
   void SetNumChildren(size_t nuChildren);
-  void IncPosCount();
-  void IncPosCount(UctValueType count);
-  void DecPosCount();
-  void DecPosCount(UctValueType count);
-  void SetPosCount(UctValueType value);
-  void InitializeValue(UctValueType value, UctValueType count);
   void CopyDataFrom(const UctNode &node, bool copyParent = true);
   void CopyNonPointerData(const UctNode &node);
   bool HasMove() const;
   GoMove Move() const;
   GoMove MoveNoCheck() const;
   void SetMove(GoMove move);
-  UctValueType RaveCount() const;
-  UctValueType RaveValue() const;
-  bool HasRaveValue() const;
-  void AddRaveValue(UctValueType value, UctValueType weight);
-  void RemoveRaveValue(UctValueType value);
-  void RemoveRaveValue(UctValueType value, UctValueType weight);
-  void InitializeRaveValue(UctValueType value, UctValueType count);
-  float PredictorValue() const;
   int VirtualLossCount() const;
   void AddVirtualLoss();
   void RemoveVirtualLoss();
-  UctValueType KnowledgeCount() const;
-  void SetKnowledgeCount(UctValueType count);
   bool IsProven() const;
   bool IsProvenWin() const;
   bool IsProvenLoss() const;
@@ -157,8 +112,7 @@ class UctNode {
 #ifdef USE_DIRECT_VISITCOUNT
   void SetVisitCount(UctValueType count);
   UctValueType getTotalActionValue() const;
-  UctValueType getMeanActionValue() const;
-  void SetValue(UctValueType value);
+  UctValueType MeanActionValue() const;
   void AddValue(UctValueType value);
 #endif
 
@@ -169,11 +123,12 @@ class UctNode {
   void SetParent(UctNode *parent);
 
  private:
-  UctStatisticsVolatile uct_stats;
 #ifdef USE_DIRECT_VISITCOUNT
-  volatile UctValueType m_visitCount;
+  volatile int visit_count;
   volatile UctValueType uct_w;
   volatile UctValueType uct_Q;
+#else
+  UctStatisticsVolatile uct_stats;
 #endif
 
   float* policy;
@@ -183,22 +138,21 @@ class UctNode {
   SgBlackWhite move_color;
   volatile size_t num_children;
   volatile GoMove move;
-  volatile float predictor_val;
-  UctStatisticsVolatile rave_value;
   volatile UctValueType pos_cnt;
-  volatile UctValueType knowledge_cnt;
   volatile UctProvenType proven_type;
   volatile int v_loss_cnt;
 };
+
 std::ostream &operator<<(std::ostream &stream, const UctNode &node);
 
 inline UctNode::UctNode(const UctMoveInfo &info, const UctNode *parent)
-    : uct_stats(info.uct_value, info.visit_count),
-      policy(nullptr),
+    : policy(nullptr),
 #ifdef USE_DIRECT_VISITCOUNT
-m_visitCount(info.visit_count),
-uct_w(info.uct_w),
-uct_Q(info.uct_Q),
+      visit_count(info.visit_count),
+      uct_w(info.uct_w),
+      uct_Q(info.uct_Q),
+#else
+      uct_stats(info.uct_value, info.visit_count),
 #endif
       move_prior(info.uct_prior),
       parent(const_cast<UctNode *>(parent)),
@@ -206,21 +160,19 @@ uct_Q(info.uct_Q),
       move_color(SG_WHITE),
       num_children(0),
       move(info.uct_move),
-      predictor_val(info.predictor_val),
-      rave_value(info.rave_value, info.rave_cnt),
       pos_cnt(0),
-      knowledge_cnt(0),
       proven_type(PROVEN_NONE),
       v_loss_cnt(0) {
 }
 
 inline UctNode::UctNode(GoMove move, const UctNode *parent)
-    : uct_stats(move, 0),
-      policy(0),
+    : policy(0),
 #ifdef USE_DIRECT_VISITCOUNT
-m_visitCount(0),
-uct_w(0),
-uct_Q(0),
+      visit_count(0),
+      uct_w(0),
+      uct_Q(0),
+#else
+      uct_stats(0, 0),
 #endif
       move_prior(0),
       parent(const_cast<UctNode *>(parent)),
@@ -228,48 +180,9 @@ uct_Q(0),
       move_color(SG_WHITE),
       num_children(0),
       move(move),
-      predictor_val(0),
-      rave_value(0, 0),
       pos_cnt(0),
-
-      knowledge_cnt(0),
       proven_type(PROVEN_NONE),
       v_loss_cnt(0) {
-}
-
-inline void UctNode::AddGameResult(UctValueType eval) {
-  uct_stats.Add(eval);
-}
-
-inline void UctNode::AddGameResults(UctValueType eval, UctValueType count) {
-  uct_stats.Add(eval, count);
-}
-
-inline void UctNode::MergeResults(const UctNode &node) {
-  if (node.uct_stats.IsDefined())
-    uct_stats.Add(node.uct_stats.Mean(), node.uct_stats.Count());
-  if (node.rave_value.IsDefined())
-    rave_value.Add(node.rave_value.Mean(), node.rave_value.Count());
-}
-
-inline void UctNode::RemoveGameResult(UctValueType eval) {
-  uct_stats.Remove(eval);
-}
-
-inline void UctNode::RemoveGameResults(UctValueType eval, UctValueType count) {
-  uct_stats.Remove(eval, count);
-}
-
-inline void UctNode::AddRaveValue(UctValueType value, UctValueType weight) {
-  rave_value.Add(value, weight);
-}
-
-inline void UctNode::RemoveRaveValue(UctValueType value) {
-  rave_value.Remove(value);
-}
-
-inline void UctNode::RemoveRaveValue(UctValueType value, UctValueType weight) {
-  rave_value.Remove(value, weight);
 }
 
 inline void UctNode::CopyDataFrom(const UctNode &node, bool copyParent) {
@@ -278,17 +191,15 @@ inline void UctNode::CopyDataFrom(const UctNode &node, bool copyParent) {
   first_child = node.first_child;
   num_children = node.num_children;
 
-  uct_stats = node.uct_stats;
   move = node.move;
-  predictor_val = node.predictor_val;
-  rave_value = node.rave_value;
   pos_cnt = node.pos_cnt;
 #ifdef USE_DIRECT_VISITCOUNT
-  m_visitCount = node.m_visitCount;
+  visit_count = node.visit_count;
   uct_w = node.uct_w;
   uct_Q = node.uct_Q;
+#else
+  uct_stats = node.uct_stats;
 #endif
-  knowledge_cnt = node.knowledge_cnt;
   proven_type = node.proven_type;
   v_loss_cnt = node.v_loss_cnt;
   move_color = node.move_color;
@@ -297,17 +208,15 @@ inline void UctNode::CopyDataFrom(const UctNode &node, bool copyParent) {
 }
 
 inline void UctNode::CopyNonPointerData(const UctNode &node) {
-  uct_stats = node.uct_stats;
   move = node.move;
-  predictor_val = node.predictor_val;
-  rave_value = node.rave_value;
   pos_cnt = node.pos_cnt;
 #ifdef USE_DIRECT_VISITCOUNT
-  m_visitCount = node.m_visitCount;
+  visit_count = node.visit_count;
   uct_w = node.uct_w;
   uct_Q = node.uct_Q;
+#else
+  uct_stats = node.uct_stats;
 #endif
-  knowledge_cnt = node.knowledge_cnt;
   proven_type = node.proven_type;
   v_loss_cnt = node.v_loss_cnt;
   move_color = node.move_color;
@@ -327,11 +236,7 @@ inline bool UctNode::HasChildren() const {
 }
 
 inline bool UctNode::HasMean() const {
-  return uct_stats.IsDefined();
-}
-
-inline bool UctNode::HasRaveValue() const {
-  return rave_value.IsDefined();
+  return visit_count > 0;
 }
 
 inline int UctNode::VirtualLossCount() const {
@@ -346,42 +251,16 @@ inline void UctNode::RemoveVirtualLoss() {
   v_loss_cnt--;
 }
 
-inline void UctNode::IncPosCount() {
-  ++pos_cnt;
-}
-
-inline void UctNode::IncPosCount(UctValueType count) {
-  pos_cnt += count;
-}
-
-inline void UctNode::DecPosCount() {
-  UctValueType posCount = pos_cnt;
-  if (posCount > 0) {
-    pos_cnt = posCount - 1;
-  }
-}
-
-inline void UctNode::DecPosCount(UctValueType count) {
-  UctValueType posCount = pos_cnt;
-  if (posCount >= count) {
-    pos_cnt = posCount - count;
-  }
-}
-
 inline bool UctNode::HasMove() const {
   return move != GO_NULLMOVE;
 }
 
-inline void UctNode::InitializeValue(UctValueType value, UctValueType count) {
-  uct_stats.Initialize(value, count);
-}
-
-inline void UctNode::InitializeRaveValue(UctValueType value, UctValueType count) {
-  rave_value.Initialize(value, count);
-}
-
 inline UctValueType UctNode::Mean() const {
+#ifdef USE_DIRECT_VISITCOUNT
+  return uct_Q;
+#else
   return uct_stats.Mean();
+#endif
 }
 
 inline GoMove UctNode::Move() const {
@@ -398,7 +277,11 @@ inline void UctNode::SetMove(GoMove move) {
 }
 
 inline UctValueType UctNode::MoveCount() const {
+#ifdef USE_DIRECT_VISITCOUNT
+  return visit_count;
+#else
   return uct_stats.Count();
+#endif
 }
 
 inline size_t UctNode::NumChildren() const {
@@ -411,22 +294,10 @@ inline UctValueType UctNode::PosCount() const {
 
 inline UctValueType UctNode::VisitCount() const {
 #ifdef USE_DIRECT_VISITCOUNT
-  return m_visitCount;
+  return visit_count;
 #else
   return uct_stats.Count();
 #endif
-}
-
-inline float UctNode::PredictorValue() const {
-  return predictor_val;
-}
-
-inline UctValueType UctNode::RaveCount() const {
-  return rave_value.Count();
-}
-
-inline UctValueType UctNode::RaveValue() const {
-  return rave_value.Mean();
 }
 
 inline void UctNode::SetFirstChild(const UctNode *child) {
@@ -436,18 +307,6 @@ inline void UctNode::SetFirstChild(const UctNode *child) {
 inline void UctNode::SetNumChildren(size_t nuChildren) {
   // DBG_ASSERT(nuChildren >= 0);
   num_children = nuChildren;
-}
-
-inline void UctNode::SetPosCount(UctValueType value) {
-  pos_cnt = value;
-}
-
-inline UctValueType UctNode::KnowledgeCount() const {
-  return knowledge_cnt;
-}
-
-inline void UctNode::SetKnowledgeCount(UctValueType count) {
-  knowledge_cnt = count;
 }
 
 inline bool UctNode::IsProven() const {
@@ -489,25 +348,44 @@ inline SgBlackWhite UctNode::GetColor() const {
 #ifdef USE_DIRECT_VISITCOUNT
 inline void UctNode::SetVisitCount(UctValueType count)
 {
-    m_visitCount = count;
+    visit_count = count;
 }
 
 inline UctValueType UctNode::getTotalActionValue() const {
     return uct_w;
 }
-inline UctValueType UctNode::getMeanActionValue() const {
+inline UctValueType UctNode::MeanActionValue() const {
     return uct_Q;
-}
-
-inline void UctNode::SetValue(UctValueType value) {
-  uct_w = value;
 }
 
 inline void UctNode::AddValue(UctValueType value)
 {
-  m_visitCount += 1;
+  visit_count += 1;
   uct_w += value;
-  uct_Q = uct_w / m_visitCount;
+  uct_Q = uct_w / visit_count;
+}
+#else
+inline void UctNode::AddGameResult(UctValueType eval) {
+  uct_stats.Add(eval);
+}
+
+inline void UctNode::AddGameResults(UctValueType eval, UctValueType count) {
+  uct_stats.Add(eval, count);
+}
+
+inline void UctNode::MergeResults(const UctNode &node) {
+  if (node.uct_stats.IsDefined())
+    uct_stats.Add(node.uct_stats.Mean(), node.uct_stats.Count());
+  if (node.rave_value.IsDefined())
+    rave_value.Add(node.rave_value.Mean(), node.rave_value.Count());
+}
+
+inline void UctNode::RemoveGameResult(UctValueType eval) {
+  uct_stats.Remove(eval);
+}
+
+inline void UctNode::RemoveGameResults(UctValueType eval, UctValueType count) {
+  uct_stats.Remove(eval, count);
 }
 #endif
 
@@ -713,13 +591,6 @@ class UctSearchTree {
   void CreateAllocators(std::size_t num_ths);
   void AddGameResult(const UctNode &node, const UctNode *father,
                      UctValueType eval);
-  void AddGameResults(const UctNode &node, const UctNode *father,
-                      UctValueType eval, UctValueType count);
-  void RemoveGameResult(const UctNode &node, const UctNode *father,
-                        UctValueType eval);
-  void RemoveGameResults(const UctNode &node, const UctNode *father,
-                         UctValueType eval, UctValueType count);
-
   void AddVirtualLoss(const UctNode &node);
   void RemoveVirtualLoss(const UctNode &node);
 
@@ -739,10 +610,6 @@ class UctSearchTree {
   void Prune(std::size_t allocatorId, const UctNode &node, UctNode *exception);
   void Expand(std::size_t allocatorId, const UctNode &leafNode, const std::vector<UctMoveInfo> &moves);
 
-  void MergeChildren(std::size_t allocatorId, const UctNode &node,
-                     const std::vector<UctMoveInfo> &moves,
-                     bool deleteChildTrees);
-
   void ExtractSubtree(UctSearchTree &target, const UctNode &node,
                       bool warnTruncate,
                       double maxTime = std::numeric_limits<double>::max(),
@@ -757,12 +624,6 @@ class UctSearchTree {
   std::size_t NuNodes() const;
   std::size_t NuNodes(std::size_t allocatorId) const;
 
-  void AddRaveValue(const UctNode &node, UctValueType value, UctValueType weight);
-  void RemoveRaveValue(const UctNode &node, UctValueType value, UctValueType weight);
-  void InitializeValue(const UctNode &node, UctValueType value,
-                       UctValueType count);
-  void SetPosCount(const UctNode &node, UctValueType posCount);
-  void InitializeRaveValue(const UctNode &node, UctValueType value, UctValueType count);
   void ApplyFilter(const UctSearchTree &tree, std::size_t allocatorId, const UctNode &parent,
                    const std::vector<GoMove> &rootFilter);
 
@@ -787,21 +648,8 @@ class UctSearchTree {
   void ThrowConsistencyError(const std::string &message) const;
 };
 
-inline void UctSearchTree::AddGameResult(const UctNode &node,
-                                     const UctNode *father, UctValueType eval) {
-  DBG_ASSERT(Contains(node));
-  if (father != nullptr)
-    const_cast<UctNode *>(father)->IncPosCount();
-  const_cast<UctNode &>(node).AddGameResult(eval);
-}
-
-inline void UctSearchTree::AddGameResults(const UctNode &node,
-                                      const UctNode *father, UctValueType eval,
-                                      UctValueType count) {
-  DBG_ASSERT(Contains(node));
-  if (father != 0)
-    const_cast<UctNode *>(father)->IncPosCount(count);
-  const_cast<UctNode &>(node).AddGameResults(eval, count);
+inline void UctSearchTree::AddGameResult(const UctNode &node, const UctNode *father, UctValueType eval) {
+  const_cast<UctNode &>(node).AddValue(eval);
 }
 
 inline void UctSearchTree::CreateChildren(std::size_t allocatorId,
@@ -819,7 +667,6 @@ inline void UctSearchTree::CreateChildren(std::size_t allocatorId,
 
   UctValueType parentCount = 0;
   const UctNode *firstChild = allocator.Create(moves, &node, parentCount);
-  nonConstNode.SetPosCount(parentCount);
   SgSynchronizeThreadMemory();
   nonConstNode.SetFirstChild(firstChild);
   SgSynchronizeThreadMemory();
@@ -843,42 +690,12 @@ UctSearchTree::Expand(std::size_t allocatorId, const UctNode &leafNode, const st
   nonConstLeaf.SetNumChildren(nuChildren);
 }
 
-inline void UctSearchTree::RemoveGameResult(const UctNode &node,
-                                        const UctNode *father, UctValueType eval) {
-  DBG_ASSERT(Contains(node));
-  if (father != nullptr)
-    const_cast<UctNode *>(father)->DecPosCount();
-  const_cast<UctNode &>(node).RemoveGameResult(eval);
-}
-
-inline void UctSearchTree::RemoveGameResults(const UctNode &node,
-                                         const UctNode *father, UctValueType eval,
-                                         UctValueType count) {
-  DBG_ASSERT(Contains(node));
-  if (father != nullptr)
-    const_cast<UctNode *>(father)->DecPosCount(count);
-  const_cast<UctNode &>(node).RemoveGameResults(eval, count);
-}
-
 inline void UctSearchTree::AddVirtualLoss(const UctNode &node) {
   const_cast<UctNode &>(node).AddVirtualLoss();
 }
 
 inline void UctSearchTree::RemoveVirtualLoss(const UctNode &node) {
   const_cast<UctNode &>(node).RemoveVirtualLoss();
-}
-
-inline void UctSearchTree::AddRaveValue(const UctNode &node, UctValueType value,
-                                    UctValueType weight) {
-  DBG_ASSERT(Contains(node));
-  const_cast<UctNode &>(node).AddRaveValue(value, weight);
-}
-
-inline void UctSearchTree::RemoveRaveValue(const UctNode &node, UctValueType value,
-                                       UctValueType weight) {
-  SuppressUnused(weight);
-  DBG_ASSERT(Contains(node));
-  const_cast<UctNode &>(node).RemoveRaveValue(value, weight);
 }
 
 inline UctNodeAllocator &UctSearchTree::Allocator(std::size_t i) {
@@ -894,18 +711,6 @@ inline const UctNodeAllocator &UctSearchTree::Allocator(std::size_t i) const {
 inline bool UctSearchTree::HasCapacity(std::size_t allocatorId,
                                    std::size_t n) const {
   return Allocator(allocatorId).HasCapacity(n);
-}
-
-inline void UctSearchTree::InitializeValue(const UctNode &node,
-                                       UctValueType value, UctValueType count) {
-  DBG_ASSERT(Contains(node));
-  const_cast<UctNode &>(node).InitializeValue(value, count);
-}
-
-inline void UctSearchTree::InitializeRaveValue(const UctNode &node,
-                                           UctValueType value, UctValueType count) {
-  DBG_ASSERT(Contains(node));
-  const_cast<UctNode &>(node).InitializeRaveValue(value, count);
 }
 
 inline std::size_t UctSearchTree::MaxNodes() const {
@@ -926,12 +731,6 @@ inline const UctNode &UctSearchTree::Root() const {
 
 inline UctNode &UctSearchTree::Root() {
   return tree_root;
-}
-
-inline void UctSearchTree::SetPosCount(const UctNode &node,
-                                   UctValueType posCount) {
-  DBG_ASSERT(Contains(node));
-  const_cast<UctNode &>(node).SetPosCount(posCount);
 }
 
 inline void UctSearchTree::SetProvenType(const UctNode &node,

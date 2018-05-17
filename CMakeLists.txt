@@ -11,6 +11,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
 add_definitions(-DGO_DEFINE_MAX_SIZE=19)
 add_definitions(-DUSE_NNEVALTHREAD)
+add_definitions(-DCHECK_EVAL_RESULT)
+add_definitions(-DFORCE_SINGLE_THREAD)
+add_definitions(-DUSE_DIRECT_VISITCOUNT)
 
 set(CMAKE_CXX_FLAGS "-Wall -Wextra")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")

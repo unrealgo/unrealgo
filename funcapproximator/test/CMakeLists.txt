@@ -38,6 +38,12 @@ addTest(
 )
 
 addTest(
+        TARGET DlTFVariableBatchSize2
+        SOURCES ${BASE_SRC_FILES} DlTFTestVariableBatchSize2.cc
+        LIBS TensorflowCC::Shared funcapproximator
+)
+
+addTest(
         TARGET DlGraphTest
         SOURCES ${BASE_SRC_FILES} DlGraphTest.cc
         LIBS TensorflowCC::Shared funcapproximator
@@ -70,6 +76,18 @@ addTest(
 addTest(
         TARGET DlGraphPruneNodesReachableFromTest
         SOURCES ${BASE_SRC_FILES} DlGraphPruneReachableFromTest.cc
+        LIBS TensorflowCC::Shared funcapproximator
+)
+
+addTest(
+        TARGET DlGraphPrintTest
+        SOURCES ${BASE_SRC_FILES} DlGraphPrintTest.cc
+        LIBS TensorflowCC::Shared funcapproximator
+)
+
+addTest(
+        TARGET DlGraphPrintBootstrap
+        SOURCES ${BASE_SRC_FILES} DlGraphPrintBootstrap.cc
         LIBS TensorflowCC::Shared funcapproximator
 )
 

@@ -101,7 +101,7 @@ bool DlCheckPoint::DownloadMetagraph() {
     url = DlConfig::GetInstance().get_metagraph_url();
     if (atomCurl.DownloadExtractZip(url.c_str()) != CURLE_OK) {
       url = DlConfig::GetInstance().get_default_graph();
-      SgDebug() << "Extracting local default graph " << url << "\n";
+      SgDebug() << "Using local graph: " << url << "\n";
       if (!UnrealGo::StringUtil::EndsWith(url, ".zip")) {
         if (!UnrealGo::FileExists(url))
           return false;
@@ -128,7 +128,7 @@ static bool checkZipFile(DlCheckPoint::CheckPointInfo& info) {
 }
 
 bool DlCheckPoint::CheckDefaultCheckPoint(CheckPointInfo& out_) {
-  std::string defaultName = DlConfig::GetInstance().default_ckpt_prefix();
+  std::string defaultName = DlConfig::GetInstance().default_checkpoint();
   if (UnrealGo::FileExists(defaultName + ".index") && UnrealGo::FileExists(defaultName + ".data-00000-of-00001")) {
     out_.name = defaultName;
     return true;

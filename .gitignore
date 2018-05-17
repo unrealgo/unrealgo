@@ -1,3 +1,8 @@
+push.sh
+*.cbp
+*.cmake
+*.a
+Makefile
 .idea/
 bin/
 bootstrap/
@@ -6,4 +11,5 @@ cmake-build-debug
 cmake-build-relwithdebinfo/
 cmake-build-default/
 cmake-build-minsizerel/
-
+CMakeCache.txt
+CMakeFiles/

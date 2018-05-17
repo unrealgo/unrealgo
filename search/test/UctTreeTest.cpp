@@ -28,8 +28,6 @@ BOOST_AUTO_TEST_CASE(SgUctMoveInfo_Add) {
   info.Add(0.0, 10);
   BOOST_CHECK_CLOSE(info.uct_value, InverseValue(0.4), EPSILON);
   BOOST_CHECK_EQUAL(info.visit_count, 20);
-  BOOST_CHECK_CLOSE(info.rave_value, 0.4, EPSILON);
-  BOOST_CHECK_EQUAL(info.rave_cnt, 20);
 }
 
 
@@ -41,10 +39,7 @@ BOOST_AUTO_TEST_CASE(SgUctMoveInfo_Add_2) {
   info.Add(1.0, 3);
   BOOST_CHECK_CLOSE(info.uct_value, InverseValue(7.0 / 8), EPSILON);
   BOOST_CHECK_EQUAL(info.visit_count, 4);
-  BOOST_CHECK_CLOSE(info.rave_value, 7.0 / 8, EPSILON);
-  BOOST_CHECK_EQUAL(info.rave_cnt, 4);
 }
-
 
 
 BOOST_AUTO_TEST_CASE(SgUctTreeIteratorTest_Simple) {

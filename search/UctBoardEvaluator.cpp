@@ -1,8 +1,13 @@
 
+#include <funcapproximator/DlConfig.h>
 #include "funcapproximator/DlTFNetworkEvaluator.h"
 #include "UctBoardEvaluator.h"
 
-UctBoardEvaluator::UctBoardEvaluator() : m_evaluator("") {
+UctBoardEvaluator::UctBoardEvaluator() : m_evaluator("", DF_HWC) {
+  m_evaluator.SetNetworkInput(DlConfig::GetInstance().get_network_input());
+  std::vector<std::string> outputs;
+  DlConfig::GetInstance().get_network_outputs(outputs);
+  m_evaluator.SetNetworkOutput(outputs);
 }
 
 UctBoardEvaluator::UctBoardEvaluator(const std::string &graphPath, const std::string &checkpoint) : m_evaluator(graphPath) {

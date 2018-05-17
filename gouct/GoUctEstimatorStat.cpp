@@ -32,7 +32,7 @@ void GoUctEstimatorStat::Compute(GoUctSearch &search,
   if (search.GetMpiSynchronizer()->IsRootProcess()) {
     std::ofstream out(fileName.c_str(), std::ios::app);
     for (size_t n = 0; n < maxGames; n += stepSize) {
-      search.PlayGame();
+      // search.PlayGame();
       for (UctMoveInfo info : moves) {
         GoPoint p = info.uct_move;
         const UctSearchTree &tree = search.Tree();
@@ -44,16 +44,12 @@ void GoUctEstimatorStat::Compute(GoUctSearch &search,
                            "%2$.2f\t"
                            "%3$d\t"
                            "%4$.2f\t"
-                           "%5$d\t"
-                           "%6$.2f\n"
         )
             % n
             % trueValues[p]
             % child->MoveCount()
             % (child->HasMean() ?
                UctSearch::InverseEstimate(child->Mean()) : 0)
-            % child->RaveCount()
-            % (child->HasRaveValue() ? child->RaveValue() : 0)
         );
       }
     }

@@ -169,7 +169,6 @@ GoUctSearch::GoUctSearch(GoBoard &bd, UctThreadStateFactory *factory)
       m_bd(bd),
       m_root(0),
       m_liveGfx(GOUCT_LIVEGFX_NONE) {
-  SetRaveCheckSame(true);
 }
 
 GoUctSearch::~GoUctSearch() {

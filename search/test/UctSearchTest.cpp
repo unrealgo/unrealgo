@@ -154,7 +154,7 @@ bool TestThreadState::GenerateAllMoves(UctValueType count,
       moves[i].uct_value = 1.0;
       moves[i].visit_count = 1;
     }
-    moves.push_back(UctMoveInfo(100, 1.0, 10, 0, 0));
+    moves.push_back(UctMoveInfo(100, 1.0, 10));
   }
 
   if (WRITE)

@@ -22,7 +22,7 @@ class UctBoardEvaluator {
   bool GraphLoaded();
 
  private:
-  tensorflow::DlTFNetworkEvaluator m_evaluator;
+  tensorflow::DlTFNetworkEvaluator<bool> m_evaluator;
 };
 
 #endif

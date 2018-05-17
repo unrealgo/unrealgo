@@ -62,7 +62,7 @@ GoGtpEngine::GoGtpEngine(int fixedBoardSize, const char* programPath,
       m_maxClearBoard(-1),
       m_numberClearBoard(0),
       m_timeLastMove(0),
-      m_timeLimit(30),
+      m_timeLimit(100000000),
       m_overhead(0),
       m_game(fixedBoardSize > 0 ? fixedBoardSize : GO_DEFAULT_SIZE),
       m_sgCommands(*this, programPath),
@@ -126,8 +126,8 @@ GoGtpEngine::GoGtpEngine(int fixedBoardSize, const char* programPath,
     Register("genmove", &GoGtpEngine::CmdGenMove, this);
     Register("move", &GoGtpEngine::CmdGenMove, this);
     Register("m", &GoGtpEngine::CmdGenMove, this);
-    Register("genuctmove", &GoGtpEngine::CmdGenUctMove, this);
-    Register("uctgenmove", &GoGtpEngine::CmdGenUctMove, this);
+    // Register("genuctmove", &GoGtpEngine::CmdGenUctMove, this);
+    // Register("uctgenmove", &GoGtpEngine::CmdGenUctMove, this);
     Register("go_clock", &GoGtpEngine::CmdClock, this);
     Register("go_param_timecontrol", &GoGtpEngine::CmdParamTimecontrol, this);
     Register("reg_genmove", &GoGtpEngine::CmdRegGenMove, this);
@@ -371,11 +371,69 @@ void GoGtpEngine::CmdGameOver(GtpCommand& cmd) {
   AutoSave();
 }
 
+void GoGtpEngine::Play(SgBlackWhite color, GoPoint move) {
+  if (move == UCT_RESIGN) {
+    m_isPonderPosition = false;
+    return;
+  }
+  CheckMoveStackOverflow();
+  CheckLegal("illegal move: ", color, move, m_acceptIllegal);
+  m_game.AddMove(move, color);
+  auto& player = (UctDeepPlayer&)Player();
+  player.OnOppMove(move, color);
+}
+
+void GoGtpEngine::CmdPlay(GtpCommand& cmd) {
+  cmd.CheckNuArg(2);
+  SgBlackWhite color = BlackWhiteArg(cmd, 0);
+  GoPoint move = MoveArg(cmd, 1);
+  Play(color, move);
+  BoardChanged();
+}
+
 void GoGtpEngine::OnGenMove(GtpCommand& cmd, SgBlackWhite color) {
   std::unique_ptr<SgDebugToString> debugStrToString;
   if (m_debugToComment)
     debugStrToString.reset(new SgDebugToString(true));
-  GoPoint move = GenDeepUctMove(color, false);
+
+  //GoPoint move = GenDeepUctMove(color, true);
+  CheckMoveStackOverflow();
+  StartStatistics();
+
+  auto& player = (UctDeepPlayer&)Player();
+  player.TryInitNeuralNetwork();
+  double startTime = SgTime::Get();
+  SgTimeRecord timeRecord;
+  if (true || m_timeSettings.IsUnknown())
+    timeRecord = SgTimeRecord(true, m_timeLimit);
+  else {
+    timeRecord = m_game.TimeRecord();
+    timeRecord.UpdateTimeLeft();
+  }
+  AddStatistics("GAME", m_autoSaveFileName);
+  AddStatistics("MOVE", m_game.CurrentMoveNumber() + 1);
+
+  GoPoint move = GO_NULLMOVE;
+  m_mpiSynchronizer->SynchronizeMove(move);
+  player.ClearSearchTraces();
+  move = player.GenMove(timeRecord, color);
+  SgNode* searchTraces = player.TransferSearchTraces();
+  if (searchTraces != 0)
+    m_game.AppendChild(searchTraces);
+  m_mpiSynchronizer->SynchronizeMove(move);
+
+  m_timeLastMove = SgTime::Get() - startTime;
+  AddStatistics("TIME", m_timeLastMove);
+  if (move == GO_NULLMOVE)
+    throw GtpFailure() << player.Name() << " generated NULLMOVE";
+  if (move == UCT_RESIGN)
+    m_isPonderPosition = false;
+  else
+    CheckLegal(player.Name() + " generated illegal move: ", color, move, false);
+  AddPlayStatistics();
+  SaveStatistics();
+
+
   if (move == UCT_RESIGN) {
     cmd << "resign";
     const SgNode& node = m_game.AddResignNode(color);
@@ -405,7 +463,7 @@ void GoGtpEngine::CmdGenMove(GtpCommand& cmd) {
   OnGenMove(cmd, color);
 }
 
-void GoGtpEngine::CmdGenUctMove(GtpCommand& cmd) {
+/*void GoGtpEngine::CmdGenUctMove(GtpCommand& cmd) {
   cmd.CheckNuArg(1);
   SgBlackWhite color = BlackWhiteArg(cmd, 0);
   std::unique_ptr<SgDebugToString> debugStrToString;
@@ -429,7 +487,7 @@ void GoGtpEngine::CmdGenUctMove(GtpCommand& cmd) {
   }
   if (m_game.GetPlayerName(color).empty())
     m_game.UpdatePlayerName(color, Player().Name());
-}
+}*/
 
 void GoGtpEngine::CmdGenMoveCleanup(GtpCommand& cmd) {
   GoRules rules = Board().Rules();
@@ -738,14 +796,6 @@ void GoGtpEngine::CmdPlaceFreeHandicap(GtpCommand& cmd) {
   DBG_ASSERT(stones.Length() <= n);
   PlaceHandicap(stones);
   cmd << SgWritePointList(stones, "", false);
-}
-
-void GoGtpEngine::CmdPlay(GtpCommand& cmd) {
-  cmd.CheckNuArg(2);
-  SgBlackWhite color = BlackWhiteArg(cmd, 0);
-  GoPoint move = MoveArg(cmd, 1);
-  Play(color, move);
-  BoardChanged();
 }
 
 void GoGtpEngine::CmdPlayAgainst(GtpCommand& cmd) {
@@ -1226,16 +1276,6 @@ void GoGtpEngine::PlaceHandicap(const SgVector<GoPoint>& stones) {
   m_game.PlaceHandicap(stones);
   RulesChanged();
   BoardChanged();
-}
-
-void GoGtpEngine::Play(SgBlackWhite color, GoPoint move) {
-  if (move == UCT_RESIGN) {
-    m_isPonderPosition = false;
-    return;
-  }
-  CheckMoveStackOverflow();
-  CheckLegal("illegal move: ", color, move, m_acceptIllegal);
-  m_game.AddMove(move, color);
 }
 
 GoPlayer& GoGtpEngine::Player() const {

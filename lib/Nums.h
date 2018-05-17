@@ -84,6 +84,19 @@ int CumulativeChoose(T weights[], size_t len, T sum, SgRandom &random) {
   return len - 1;
 }
 
+template<class T>
+int ArgMax(T weights[], size_t len) {
+  T max = weights[0];
+  int maxID = 0;
+  for (size_t i = 1; i < len; i++) {
+    if (max < weights[i]) {
+      max = weights[i];
+      maxID = i;
+    }
+  }
+  return maxID;
+}
+
 // assume sum(weights) = 1.0
 template<class T>
 int CumulativeChoose(T weights[], int len) {

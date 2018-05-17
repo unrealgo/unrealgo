@@ -43,6 +43,12 @@ std::string GoPointUtil::ToString2(GoPoint p) {
   return buffer.str();
 }
 
+std::string GoPointUtil::ToStringFull(GoPoint move) {
+  ostringstream os;
+  os << "[" << GoPointUtil::ToString2(move) << "," << move << "]";
+  return os.str();
+}
+
 GoPoint GoPointUtil::Rotate(int rotation, GoPoint p, int size) {
   DBG_ASSERT(rotation < 8);
   if (p == GO_PASS)

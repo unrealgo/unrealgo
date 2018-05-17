@@ -17,10 +17,10 @@ DlConfig& DlConfig::GetInstance() {
   return *instance;
 }
 
-DlConfig::DlConfig(const std::string& filename) : m_config_file(filename) {
+DlConfig::DlConfig(const std::string& filename) : m_config_file(filename), valueTrans(TR_UNKNOWN) {
   if (UnrealGo::FileExists(filename))
     parse();
-  setMetagraph("bootstrap-ckpt.meta");
+  // setMetagraph("bootstrap-ckpt.meta");
 }
 
 void DlConfig::parse() {
@@ -63,19 +63,19 @@ std::string DlConfig::get_bestcheckpoint_fullpath() {
 }
 
 void DlConfig::setMetagraph(const std::string& metagraph) {
-  this->metagraph = metagraph;
+  this->current_metagraph = metagraph;
 }
 
 std::string DlConfig::get_metagraph() {
-  if (metagraph.empty()) {
-    metagraph = get_metagraph_path();
+  if (current_metagraph.empty()) {
+    current_metagraph = get_metagraph_path();
   }
-  return metagraph;
+  return current_metagraph;
 }
 
 // for both local and server
 std::string DlConfig::get_metagraph_path() {
-  return get("metagraph", "bootstrap-ckpt.meta");
+  return get("meta_graph", "bootstrap-ckpt.meta");
 }
 
 std::string DlConfig::get_traindata_dir() {
@@ -91,13 +91,30 @@ std::string DlConfig::get_minio_path() {
   }
 }
 
-std::string DlConfig::default_meta_file() {
-  return "bootstrap-ckpt.meta";
+std::string DlConfig::get_default_graph() {
+  std::string defaultMetaGraph = default_meta_graph();
+  if (UnrealGo::FileExists(defaultMetaGraph))
+    return defaultMetaGraph;
+  if (UnrealGo::FileExists("default_graph.pb.zip"))
+    return "default_graph.pb.zip";
+  return "default_graph.pb";
+}
+
+std::string DlConfig::default_meta_graph() {
+  return get("meta_graph", "bootstrap-ckpt.meta");
+}
+
+std::string DlConfig::default_checkpoint() {
+  return get("checkpoint", "bootstrap-ckpt");
+}
+
+std::string DlConfig::default_ckpt_prefix() {
+  return "bootstrap-ckpt";
 }
 
 std::string DlConfig::get_meta_subpath() {
   std::string defaultPath = "gonet-model/meta/";
-  defaultPath.append(default_meta_file());
+  defaultPath.append(default_meta_graph());
   return defaultPath;
 }
 
@@ -141,19 +158,6 @@ std::string DlConfig::get_latestcheckpointinfo_url() {
 
 std::string DlConfig::get_metagraph_url() {
   return UnrealGo::StringUtil::JoinPath(get_base_url(), get_meta_subpath());
-}
-
-std::string DlConfig::get_default_graph() {
-  std::string defaultMetaGraph = default_meta_file();
-  if (UnrealGo::FileExists(defaultMetaGraph))
-    return defaultMetaGraph;
-  if (UnrealGo::FileExists("default_graph.pb.zip"))
-    return "default_graph.pb.zip";
-  return "default_graph.pb";
-}
-
-std::string DlConfig::default_ckpt_prefix() {
-  return "bootstrap-ckpt";
 }
 
 std::string DlConfig::get(const std::string& key) {
@@ -201,4 +205,43 @@ std::string DlConfig::get_evalstatconnect_socket() {
 
 std::string DlConfig::get_deeptrainerlisten_socket() {
   return get("deeptrainernetworklistensocket", "tcp://*:5556");
+}
+
+std::string DlConfig::get_network_input() {
+  return get("nn_input", "input");
+}
+
+void DlConfig::get_network_outputs(std::vector<std::string>& outputs) {
+  std::string values = get("nn_outputs", "");
+  if (!values.empty()) {
+    UnrealGo::StringUtil::Split(values, ":", outputs);
+  }
+}
+
+bool DlConfig::reuse_search_tree() {
+  std::string value = get("reuse_searchtree", "false");
+  if (value == "false")
+    return false;
+  return true;
+}
+
+ValueTransformType DlConfig::get_value_transform() {
+  if (valueTrans == TR_UNKNOWN) {
+    std::string value = get("value_transform", "0");
+    int type = std::stoi(value);
+    switch (type) {
+      case 0:
+        valueTrans = TR_IDENTITY;
+        break;
+      case 1:
+        valueTrans = TR_FLIP_SIGN;
+        break;
+      case 2:
+        valueTrans = TR_FLIP_PROB;
+        break;
+      default:
+        valueTrans = TR_IDENTITY;
+    }
+  }
+  return valueTrans;
 }

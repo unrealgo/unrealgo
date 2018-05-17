@@ -62,6 +62,8 @@ class UctDeepPlayer
                    bool syncState = true);
   void FindInitTree(UctSearchTree &initTree, SgBlackWhite toPlay, double maxTime);
   GoPoint GenMove(const SgTimeRecord &timeRecord, SgBlackWhite toPlay) final;
+  void OnOppMove(GoMove move, SgBlackWhite color);
+
   void TryInitNeuralNetwork();
   SgDefaultTimeControl &TimeControl();
   const SgDefaultTimeControl &TimeControl() const;
