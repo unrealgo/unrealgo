@@ -15,11 +15,17 @@
 #include "DlGraphUtil.h"
 #include "../lib/ArrayUtil.h"
 #include "../config/BoardStaticConfig.h"
+#include "DlConfig.h"
 
 using namespace tensorflow;
 using namespace tensorflow::gtl;
 
-DlTFNetworkEvaluator::DlTFNetworkEvaluator(const string& graphPath) :
+template class DlTFNetworkEvaluator<bool>;
+template class DlTFNetworkEvaluator<float>;
+
+template <typename T>
+DlTFNetworkEvaluator<T>::DlTFNetworkEvaluator(const string& graphPath, DataFormat _df) :
+    m_dataFormat(_df),
     allow_growth(true),
     graph_loaded(false),
     graph_type(GT_UNKNOWN),
@@ -33,8 +39,10 @@ DlTFNetworkEvaluator::DlTFNetworkEvaluator(const string& graphPath) :
   LoadGraph(graphPath);
 }
 
-DlTFNetworkEvaluator::DlTFNetworkEvaluator(const string& graphPath, const string& feature_input,
-                     const vector<string>& outputs) :
+template <typename T>
+DlTFNetworkEvaluator<T>::DlTFNetworkEvaluator(const string& graphPath, const string& feature_input,
+                     const vector<string>& outputs, DataFormat _df) :
+    m_dataFormat(_df),
     allow_growth(true),
     graph_loaded(false),
     graph_type(GT_UNKNOWN),
@@ -44,16 +52,29 @@ DlTFNetworkEvaluator::DlTFNetworkEvaluator(const string& graphPath, const string
   LoadGraph(graphPath);
 }
 
+template <typename T>
+void DlTFNetworkEvaluator<T>::SetNetworkInput(std::string input) {
+  input_name = input;
+}
 
-DlTFNetworkEvaluator::~DlTFNetworkEvaluator() {
+template <typename T>
+void DlTFNetworkEvaluator<T>::SetNetworkOutput(std::vector<std::string>& output) {
+  m_outputs.clear();
+  m_outputs = output;
+}
+
+template <typename T>
+DlTFNetworkEvaluator<T>::~DlTFNetworkEvaluator() {
   m_session->Close();
 }
 
-void DlTFNetworkEvaluator::WritePbText(const std::string& path) {
+template <typename T>
+void DlTFNetworkEvaluator<T>::WritePbText(const std::string& path) {
   DlGraphUtil::WriteToFile(meta_graph_def.graph_def(), path);
 }
 
-bool DlTFNetworkEvaluator::LoadGraph(const string& graphPath) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::LoadGraph(const string& graphPath) {
   if (tensorflow::StringPiece(graphPath).ends_with(".meta"))
     return LoadMetaGraph(graphPath);
   else if (tensorflow::StringPiece(graphPath).ends_with(".pb"))
@@ -61,13 +82,13 @@ bool DlTFNetworkEvaluator::LoadGraph(const string& graphPath) {
   return false;
 }
 
-bool DlTFNetworkEvaluator::LoadPbGraph(const string& graphPath) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::LoadPbGraph(const string& graphPath) {
   graph_type = GT_PB;
 
   Status status = ReadBinaryProto(tensorflow::Env::Default(), graphPath, &graph_def);
   if (!status.ok()) {
     throw runtime_error("Failed to load compute graph.");
-    // return false;
   }
 
   DlGraphUtil::WriteToFile(graph_def, "graph.txt");
@@ -90,7 +111,8 @@ bool DlTFNetworkEvaluator::LoadPbGraph(const string& graphPath) {
   return true;
 }
 
-bool DlTFNetworkEvaluator::LoadMetaGraph(const string& metaGraphPath) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::LoadMetaGraph(const string& metaGraphPath) {
   graph_type = GT_META;
 
   auto sessOpt = SessionOptions();
@@ -110,13 +132,14 @@ bool DlTFNetworkEvaluator::LoadMetaGraph(const string& metaGraphPath) {
     throw runtime_error("Error reading graph definition from " + metaGraphPath + ": " + status.ToString());
   }
 
+#ifdef PRUNE_GRAPH
   DlGraphUtil::PruneNodesReachableFrom(const_cast<GraphDef&>(meta_graph_def.graph_def()), "input_producer/Const");
 
   // DlGraphUtil::OptimizeGraph(const_cast<GraphDef&>(meta_graph_def.graph_def()), m_outputs, input_name);
   // std::vector<std::string> targets({"input"});
   // DlGraphUtil::PruneForReverseReachability(const_cast<GraphDef&>(meta_graph_def.graph_def()), targets);
-//  std::string inputName = "input";
-//  DlGraphUtil::PruneNodesUnreachableFrom(const_cast<GraphDef&>(meta_graph_def.graph_def()), inputName);
+  //  std::string inputName = "input";
+  //  DlGraphUtil::PruneNodesUnreachableFrom(const_cast<GraphDef&>(meta_graph_def.graph_def()), inputName);
 
   // DlGraphUtil::WriteToFile(meta_graph_def.graph_def(), "graph.txt");
   DlGraphUtil::RemoveNodeWithNamePrefix(meta_graph_def.graph_def(), "input_variable");
@@ -127,6 +150,7 @@ bool DlTFNetworkEvaluator::LoadMetaGraph(const string& metaGraphPath) {
   DlGraphUtil::ClearNodeInputWithName(meta_graph_def.graph_def(), "^save/Assign_6");
   // std::cout << "pruned graph size:" << meta_graph_def.graph_def().node_size() << std::endl;
   // DlGraphUtil::WriteToFile(meta_graph_def.graph_def(), "graph.processed.txt");
+#endif
 
   // Add the graph to the session
   status = m_session->Create(meta_graph_def.graph_def());
@@ -142,7 +166,8 @@ bool DlTFNetworkEvaluator::LoadMetaGraph(const string& metaGraphPath) {
   return true;
 }
 
-bool DlTFNetworkEvaluator::UpdateCheckPointForMetaGraph(const string& _ck_path) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::UpdateCheckPointForMetaGraph(const string& _ck_path) {
   if (!_ck_path.empty())
     checkpoint_path = _ck_path;
   if (checkpoint_path.empty())
@@ -175,7 +200,8 @@ bool DlTFNetworkEvaluator::UpdateCheckPointForMetaGraph(const string& _ck_path) 
 }
 
 // https://stackoverflow.com/questions/37508771/how-to-save-and-restore-a-tensorflow-graph-and-its-state-in-c/37671613#37671613
-bool DlTFNetworkEvaluator::UpdateCheckPointForPbGraph(const string& checkpointPath) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::UpdateCheckPointForPbGraph(const string& checkpointPath) {
   Tensor checkpointPathTensor(DT_STRING, TensorShape());
   checkpointPathTensor.scalar<std::string>()() = checkpointPath;
   /*
@@ -200,7 +226,8 @@ bool DlTFNetworkEvaluator::UpdateCheckPointForPbGraph(const string& checkpointPa
   return true;
 }
 
-bool DlTFNetworkEvaluator::UpdateCheckPoint(const string& checkpointPath) {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::UpdateCheckPoint(const string& checkpointPath) {
   if (graph_type == GT_META)
     return UpdateCheckPointForMetaGraph(checkpointPath);
   else if (graph_type == GT_PB)
@@ -208,11 +235,13 @@ bool DlTFNetworkEvaluator::UpdateCheckPoint(const string& checkpointPath) {
   return false;
 }
 
-bool DlTFNetworkEvaluator::MetaGraphLoaded() {
+template <typename T>
+bool DlTFNetworkEvaluator<T>::MetaGraphLoaded() {
   return graph_loaded;
 }
 
-tensorflow::MetaGraphDef& DlTFNetworkEvaluator::GetMetaGraph() {
+template <typename T>
+tensorflow::MetaGraphDef& DlTFNetworkEvaluator<T>::GetMetaGraph() {
   return meta_graph_def;
 }
 
@@ -238,14 +267,24 @@ static void CheckRange(const double value_[], int length, double low, double hig
 }
 #endif
 
-void DlTFNetworkEvaluator::CreateTensor(int batches) {
-  auto* feature_batch = new float[batches * BD_SIZE * BD_SIZE * NUM_MAPS];
+template <typename T>
+void DlTFNetworkEvaluator<T>::CreateTensor(int batches) {
+  auto* feature_batch = new T[batches * BD_SIZE * BD_SIZE * NUM_MAPS];
   int64_t dims[] = {batches, BD_SIZE, BD_SIZE, NUM_MAPS};
-  DlTensorUtil<float>::Feature2Tensor(feature_batch, dims, sizeof(dims) / sizeof(int64_t), TF_FLOAT,
+  const bool T_is_BOOL = std::is_same<T, bool>::value;
+  const bool T_is_FLOAT = std::is_same<T, float>::value;
+  TF_DataType dataType = TF_BOOL;
+  if (T_is_BOOL)
+    dataType = TF_BOOL;
+  else if (T_is_FLOAT)
+    dataType = TF_FLOAT;
+
+  DlTensorUtil<T>::Feature2Tensor(feature_batch, dims, sizeof(dims) / sizeof(int64_t), dataType,
                                       m_input_tensors[batches - 1]);
 }
 
-void DlTFNetworkEvaluator::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE],
+template <typename T>
+void DlTFNetworkEvaluator<T>::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE],
                                     double policies_[][GO_MAX_MOVES], double value_[], int numBatches) {
   if (m_input_tensors[numBatches - 1].dim_size(0) != numBatches)
     CreateTensor(numBatches);
@@ -253,12 +292,22 @@ void DlTFNetworkEvaluator::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE],
   TransformFeature(feature, numBatches);
   std::vector<Tensor> outputs;
   string input_layer = input_name;
-  Status run_status = m_session->Run({{input_layer, m_input_tensors[numBatches - 1]}},
-      /*{"policy_head/policy", "value_head/reward"}*/m_outputs, {}, &outputs);
+  Status run_status = m_session->Run({{input_layer, m_input_tensors[numBatches - 1]}}, m_outputs, {}, &outputs);
 
   if (run_status.ok() && outputs.size() >= 2) {
     DlTensorUtil<float>::GetValue(outputs[0], policies_[0], GO_MAX_MOVES * numBatches);
     DlTensorUtil<float>::GetValue(outputs[1], value_, numBatches);
+    ValueTransformType vt = DlConfig::GetInstance().get_value_transform();
+    switch (vt) {
+      case TR_FLIP_SIGN:
+        for (int i=0; i<numBatches; ++i)
+          value_[i] = - value_[i];
+        break;
+      case TR_FLIP_PROB:
+        for (int i=0; i<numBatches; ++i)
+          value_[i] = 1 - value_[i];
+        break;
+    }
 #ifdef CHECK_EVAL_RESULT
     ///CheckPolicies(policies_, numBatches);
     ///CheckRange(value_, numBatches, -1, 1);
@@ -268,128 +317,96 @@ void DlTFNetworkEvaluator::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE],
   }
 }
 
-void DlTFNetworkEvaluator::TransformFeature(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE], int numBatches) {
+template <typename T>
+void DlTFNetworkEvaluator<T>::Evaluate(char feature[][BD_SIZE][BD_SIZE][NUM_MAPS],
+                                       double policies_[][GO_MAX_MOVES], double value_[], int batch_size) {
+  Tensor feature_tensor(DT_BOOL, TensorShape({batch_size, FEATURE_SIZE}));
+  auto matrix = feature_tensor.matrix<bool>();
+  for (int i = 0; i < batch_size; ++i) {
+    for (int j = 0; j < FEATURE_SIZE; ++j) {
+      matrix(i, j) = (bool)((char*)feature[i])[j];
+    }
+  }
+
+  std::vector<Tensor> outputs;
+  Status run_status = m_session->Run({{input_name, feature_tensor}}, m_outputs, {}, &outputs);
+
+  if (run_status.ok() && outputs.size() >= 2) {
+    auto policy_tensor = outputs[0].matrix<float>();
+    auto value_tensor  = outputs[1].flat<float>();
+    for (int i = 0; i < batch_size; ++i) {
+      for (int j = 0; j < GO_MAX_MOVES; ++j) {
+        policies_[i][j] = policy_tensor(i, j);
+      }
+      value_[i] = -value_tensor(i);
+    }
+//    DlTensorUtil<float>::GetValue(outputs[0], policies_[0], GO_MAX_MOVES * batch_size);
+//    DlTensorUtil<float>::GetValue(outputs[1], value_, batch_size);
+#ifdef CHECK_EVAL_RESULT
+    CheckPolicies(policies_, batch_size);
+    ///CheckRange(value_, batch_size, -1, 1);
+#endif
+  } else {
+    LOG(ERROR) << "Running model failed: " << run_status;
+  }
+}
+
+template <typename T>
+void DlTFNetworkEvaluator<T>::printFeature(T data[]) {
+  for (int i=0; i<BD_SIZE*BD_SIZE; ++i) {
+    for (int j=0; j<NUM_MAPS; ++j) {
+      printf("%d ", (int)data[i*NUM_MAPS+j]);
+    }
+    printf("\n");
+  }
+  printf("\n");
+}
+
+template <typename T>
+void DlTFNetworkEvaluator<T>::TransformFeature(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE], int numBatches) {
   int h = BD_SIZE;
   int w = BD_SIZE;
+  T* data = m_input_tensors[numBatches - 1].flat<T>().data();
   for (int batchID = 0; batchID < numBatches; ++batchID) {
-    for (int i = 0; i < NUM_MAPS; ++i) {
-      for (int j = 0; j < h; ++j) {
-        for (int k = 0; k < w; ++k) {
-          float* data = m_input_tensors[numBatches - 1].flat<float>().data();
-          int index = UnrealGo::ArrayUtil::GetOffset({numBatches, BD_SIZE, BD_SIZE, NUM_MAPS}, 4,
-                                                     {batchID, j, k, i});
-          data[index] = (float)feature[batchID][i][j][k];
+    for (int depth = 0; depth < NUM_MAPS; ++depth) {
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          int index = 0;
+          if (m_dataFormat == DF_HWC)
+            index = UnrealGo::ArrayUtil::GetOffset({numBatches, BD_SIZE, BD_SIZE, NUM_MAPS}, 4,
+                                                     {batchID, i, j, depth});
+          else if (m_dataFormat == DF_CHW)
+            index = UnrealGo::ArrayUtil::GetOffset({numBatches, NUM_MAPS, BD_SIZE, BD_SIZE}, 4,
+                                                   {batchID, depth, i, j});
+          data[index] = (T)feature[batchID][depth][i][j];
+        }
+      }
+    }
+  }
+
+//  if (m_dataFormat == DF_HWC)
+//    printFeature(data);
+}
+
+template <typename T>
+void DlTFNetworkEvaluator<T>::TransformFeature(char feature[][BD_SIZE][BD_SIZE][NUM_MAPS], int numBatches) {
+  int h = BD_SIZE;
+  int w = BD_SIZE;
+  T* data = m_input_tensors[numBatches - 1].flat<T>().data();
+  for (int batchID = 0; batchID < numBatches; ++batchID) {
+    for (int depth = 0; depth < NUM_MAPS; ++depth) {
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          int index = 0;
+          if (m_dataFormat == DF_HWC)
+            index = UnrealGo::ArrayUtil::GetOffset({numBatches, BD_SIZE, BD_SIZE, NUM_MAPS}, 4,
+                                                   {batchID, i, j, depth});
+          else if (m_dataFormat == DF_CHW)
+            index = UnrealGo::ArrayUtil::GetOffset({numBatches, NUM_MAPS, BD_SIZE, BD_SIZE}, 4,
+                                                   {batchID, depth, i, j});
+          data[index] = (T)feature[batchID][depth][i][j];
         }
       }
     }
   }
 }
-
-
-
-//void DlTFNetworkEvaluator::Evaluate(char feature[][BD_SIZE][BD_SIZE], int numFeatures,
-//                                    float policies_[], int length, float &value_) {
-//  int64_t dims[] = {numFeatures, BD_SIZE, BD_SIZE};
-//  Tensor input_tensor;
-//  DlTensorUtil<char>::Feature2Tensor(&(feature[0][0][0]), dims, sizeof(dims) / sizeof(int64_t), TF_INT8, input_tensor);
-//  Input perm = {1, 2, 0};
-//  input_tensor = DlTensorUtil<char>::TransposeTensor(input_tensor, perm);
-//#ifdef LOG_TENSORFLOW
-//  std::cout << "TensorDebug:" << input_tensor.DebugString() << std::endl;
-//#endif
-//
-//  input_tensor = DlTensorUtil<float>::CastTensor(input_tensor, tensorflow::DT_FLOAT);
-//#ifdef LOG_TENSORFLOW
-//  std::cout << "TensorDebug:" << input_tensor.DebugString() << std::endl;
-//#endif
-//
-//  input_tensor = DlTensorUtil<float>::ExpandTensorDims(input_tensor);
-//#ifdef LOG_TENSORFLOW
-//  std::cout << "TensorDebug:" << input_tensor.DebugString() << std::endl;
-//#endif
-//
-//  std::vector<Tensor> outputs;
-//  string input_layer = input_name;
-//  Status run_status = m_session->Run({{input_layer, input_tensor}},
-//                                     m_outputs, {}, &outputs);
-//
-//  DlTensorUtil<float>::GetValue(outputs[0], policies_, length);
-//  DlTensorUtil<float>::GetValue(outputs[1], &value_, 1);
-//
-//  if (!run_status.ok()) {
-//    LOG(ERROR) << "Running model failed: " << run_status;
-//  }
-//}
-
-//void DlTFNetworkEvaluator::TransformFeature(char feature[][BD_SIZE][BD_SIZE], int numFeatures) {
-//  int h = BD_SIZE;
-//  int w = BD_SIZE;
-//  for (int i = 0; i < numFeatures; ++i) {
-//    for (int j = 0; j < h; ++j) {
-//      for (int k = 0; k < w; ++k) {
-//        // m_feature_batch[0][j][k][i] = (float) feature[i][j][k];
-//        float* data = (TensorCApi::Buffer(m_inputTensor)->base<float>());
-//        int index = UnrealGo::ArrayUtil::GetOffset({BD_SIZE, BD_SIZE, NUM_MAPS}, 4,
-//                                                 {j, k, i});
-//        data[index] = (float) feature[i][j][k];
-//      }
-//    }
-//  }
-//}
-
-
-//void DlTFNetworkEvaluator::Evaluate(char feature[][BD_SIZE][BD_SIZE], int numFeatures,
-//                                    double policies_[], int length, double &value_) {
-//  TransformFeature(feature, numFeatures);
-//  int64_t dims[] = {1, BD_SIZE, BD_SIZE, numFeatures};
-//  Tensor input_tensor;
-//  DlTensorUtil<float>::Feature2Tensor(&(m_feature_batch[0][0][0][0]), dims, sizeof(dims) / sizeof(int64_t), TF_FLOAT,
-//                                      input_tensor);
-//
-//  std::vector<Tensor> outputs;
-//  string input_layer = input_name;
-//  Status run_status = m_session->Run({{input_layer, input_tensor}},
-//                                     m_outputs, {}, &outputs);
-//  DlTensorUtil<float>::GetValue(outputs[0], policies_, length);
-//  DlTensorUtil<float>::GetValue(outputs[1], &value_, 1);
-//  //DlTensorUtil<float>::PrintTensor(outputs[0]);
-//  if (!run_status.ok()) {
-//    LOG(ERROR) << "Running model failed: " << run_status;
-//  }
-//}
-
-
-
-/*
-void DlTFNetworkEvaluator::Evaluate(char feature[][NUM_MAPS][BD_SIZE][BD_SIZE], int numBatches,
-                                    float actions_[], int length, float &value_) {
-  int64_t dims[] = {numBatches, NUM_MAPS, BD_SIZE, BD_SIZE};
-  Tensor input_tensor;
-  DlTensorUtil<char>::Feature2Tensor(&(feature[0][0][0][0]), dims, sizeof(dims) / sizeof(int64_t), TF_INT8,
-                                     input_tensor);
-  Input perm = {0, 2, 3, 1};
-  input_tensor = DlTensorUtil<char>::TransposeTensor(input_tensor, perm);
-#ifdef LOG_TENSORFLOW
-  std::cout << "TensorDebug:" << input_tensor.DebugString() << std::endl;
-#endif
-
-  input_tensor = DlTensorUtil<float>::CastTensor(input_tensor, tensorflow::DT_FLOAT);
-#ifdef LOG_TENSORFLOW
-  std::cout << "TensorDebug:" << input_tensor.DebugString() << std::endl;
-#endif
-
-  std::vector<Tensor> outputs;
-  string input_layer = input_name;
-  Status run_status = m_session->Run({{input_layer, input_tensor}},
-      */
-/*{"policy_head/policy", "value_head/reward"}*//*
-m_outputs, {}, &outputs);
-
-  DlTensorUtil<float>::GetValue(outputs[0], actions_, length);
-  DlTensorUtil<float>::GetValue(outputs[1], &value_, 1);
-
-//  DlTensorUtil<float>::PrintTensor(outputs[0]);
-  if (!run_status.ok()) {
-    LOG(ERROR) << "Running model failed: " << run_status;
-  }
-}*/

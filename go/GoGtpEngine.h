@@ -38,7 +38,7 @@ class GoGtpEngine
   virtual void CmdFixedHandicap(GtpCommand&);
   virtual void CmdGameOver(GtpCommand&);
   virtual void CmdGenMove(GtpCommand&);
-  virtual void CmdGenUctMove(GtpCommand&);
+  // virtual void CmdGenUctMove(GtpCommand&);
   virtual void CmdGenMoveCleanup(GtpCommand&);
   virtual void CmdGetKomi(GtpCommand&);
   virtual void CmdGGUndo(GtpCommand&);

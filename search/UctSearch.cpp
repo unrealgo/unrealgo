@@ -4,6 +4,7 @@
 
 #include <boost/lexical_cast.hpp>
 #include <GoUctGlobalSearch.h>
+#include <lib/ArrayUtil.h>
 #include "platform/SgPlatform.h"
 #include "Nums.h"
 #include "lib/FileUtil.h"
@@ -57,13 +58,11 @@ void UctGameInfo::Clear(std::size_t numberPlayouts) {
   m_inTreeSequence.clear();
   if (numberPlayouts != m_sequence.size()) {
     m_sequence.resize(numberPlayouts);
-    m_skipRaveUpdate.resize(numberPlayouts);
     m_eval.resize(numberPlayouts);
     m_aborted.resize(numberPlayouts);
   }
   for (size_t i = 0; i < numberPlayouts; ++i) {
     m_sequence[i].clear();
-    m_skipRaveUpdate[i].clear();
   }
 }
 
@@ -76,10 +75,6 @@ void UctGameInfo::Clear() {
        it != m_sequence.end(); ++it)
     it->clear();
   m_sequence.clear();
-  for (auto it = m_skipRaveUpdate.begin();
-       it != m_skipRaveUpdate.end(); ++it)
-    it->clear();
-  m_skipRaveUpdate.clear();
 }
 
 EvalMsg::EvalMsg() :
@@ -280,8 +275,6 @@ void UctSearch::Thread::operator()() {
     while (!msg_q.empty()) {
       Msg& msg = msg_q.front();
       switch (msg.type) {
-        case MSG_SEARCH_LOOP:searcher.SearchLoop(*m_state, &global_lock);
-          break;
         case MSG_DEEP_UCT_SEARCH:searcher.DeepUCTSearchLoop(*m_state, &global_lock);
           break;
         case MSG_ESTIMATE_SCORE: {
@@ -352,10 +345,8 @@ UctSearch::UctSearch(UctThreadStateFactory* threadStateFactory, int moveRange)
       log_games(false),
 #endif
       prune_tree(true),
-      use_rave(false),
       max_knowledge_threads(1024),
       move_select(SG_UCTMOVESELECT_COUNT),
-      rave_check_same(false),
       randomize_rave_freq(20),
       lock_free(SgPlatform::GetLockFreeDefault()),
       weight_rave_updates(true),
@@ -372,11 +363,13 @@ UctSearch::UctSearch(UctThreadStateFactory* threadStateFactory, int moveRange)
       bias_term_const(0.7f),
       bias_term_freq(1),
       bias_term_depth(0),
-      first_play_urgency(10000),
+      first_play_urgency(0),
       initial_rave_weight(0.9f),
       final_rave_weight(20000),
-      puct_const(sqrt(2.0)),
+      // puct_const(sqrt(2.0)),
+      puct_const(2.5),
       use_virtual_loss(false),
+      select_with_dirichlet(false),
       log_file_name("uctsearch.log"),
 #if USE_FASTLOG
       fast_logrithm(10),
@@ -402,19 +395,10 @@ const std::string& UctSearch::getCheckPoint() {
   return eval_thread->getCheckPoint();
 }
 
-void UctSearch::ApplyRootFilter(vector<UctMoveInfo>& moves) {
-  vector<UctMoveInfo> filteredMoves;
-  for (vector<UctMoveInfo>::const_iterator it = moves.begin();
-       it != moves.end(); ++it)
-    if (find(root_filter.begin(), root_filter.end(), it->uct_move)
-        == root_filter.end())
-      filteredMoves.push_back(*it);
-  moves = filteredMoves;
-}
-
 UctValueType UctSearch::GamesPlayed() const {
   return search_tree.Root().MoveCount() - start_root_move_cnt;
 }
+
 bool UctSearch::CheckAbortForDeepSearch(UctThreadState& state) {
   if (ForceAbort()) {
     Debug(state, "UctSearch: abort flag");
@@ -433,79 +417,6 @@ bool UctSearch::CheckAbortForDeepSearch(UctThreadState& state) {
       Debug(state, "UctSearch: max time reached");
       return true;
     }
-  }
-  return false;
-}
-
-bool UctSearch::CheckAbortSearch(UctThreadState& state) {
-  if (ForceAbort()) {
-    Debug(state, "UctSearch: abort flag");
-    return true;
-  }
-  const UctNode& root = search_tree.Root();
-  if (!UctValueUtil::IsPrecise(root.MoveCount()) && check_float_precision) {
-    Debug(state, "UctSearch: floating point type precision reached");
-    return true;
-  }
-  UctValueType rootCount = root.MoveCount();
-  if (rootCount >= max_games) {
-    Debug(state, "UctSearch: max games reached");
-    return true;
-  }
-  if (root.IsProven()) {
-    if (root.IsProvenWin())
-      Debug(state, "UctSearch: root is proven win!");
-    else
-      Debug(state, "UctSearch: root is proven loss!");
-    return true;
-  }
-  const bool isEarlyAbort = CheckEarlyAbort();
-  if (isEarlyAbort
-      && early_abort_param->reduction_factor * rootCount >= max_games
-      ) {
-    Debug(state, "UctSearch: max games reached (early abort)");
-    early_aborted = true;
-    return true;
-  }
-  if (GamesPlayed() >= next_check_time) {
-    next_check_time = GamesPlayed() + check_interval;
-    double time = search_timer.GetTime();
-
-    if (time > max_time) {
-      Debug(state, "UctSearch: max time reached");
-      return true;
-    }
-    if (isEarlyAbort
-        && early_abort_param->reduction_factor * time > max_time) {
-      Debug(state, "UctSearch: max time reached (early abort)");
-      early_aborted = true;
-      return true;
-    }
-    if (!SgDeterministic::IsDeterministicMode())
-      UpdateCheckTimeInterval(time);
-    if (move_select == SG_UCTMOVESELECT_COUNT) {
-      double remainingGamesDouble = max_games - rootCount - 1;
-      if (time > 1.) {
-        double remainingTime = max_time - time;
-        remainingGamesDouble =
-            std::min(remainingGamesDouble,
-                     remainingTime * search_stat.searches_per_second);
-      }
-      UctValueType uctCountMax = numeric_limits<UctValueType>::max();
-      UctValueType remainingGames;
-      if (remainingGamesDouble >= static_cast<double>(uctCountMax - 1))
-        remainingGames = uctCountMax;
-      else
-        remainingGames = UctValueType(remainingGamesDouble);
-      if (CheckCountAbort(state, remainingGames)) {
-        Debug(state, "UctSearch: move cannot change anymore");
-        return true;
-      }
-    }
-  }
-  if (mpi_synchronizer->CheckAbort()) {
-    Debug(state, "UctSearch: parallel mpi search finished");
-    return true;
   }
   return false;
 }
@@ -564,32 +475,24 @@ void UctSearch::DeleteThreads() {
   search_threads.clear();
 }
 
-
-void UctSearch::ExpandNode(UctThreadState& state, const UctNode& node) {
-  size_t threadId = state.thread_id;
-  if (!search_tree.HasCapacity(threadId, state.move_info.size())) {
-    Debug(state, str(format("UctSearch: maximum tree size %1% reached")
-                         % search_tree.MaxNodes()));
-    state.tree_exceed_memory_limit = true;
-    tree_exceeds_mem_limit = true;
-    SgSynchronizeThreadMemory();
-    return;
-  }
-  search_tree.CreateChildren(threadId, node, state.move_info);
-}
-bool UctSearch::ExpandAndBackPropogate(UctThreadState& state, const UctNode* root, const UctNode& leafNode,
-                                       int depth) {
+bool UctSearch::ExpandAndBackup(UctThreadState& state, const UctNode* root, const UctNode& leafNode) {
   state.move_info.clear();
   UctProvenType provenType = PROVEN_NONE;
   state.GenerateAllMoves(1, state.move_info, provenType);
   if (state.move_info.empty()) {
 #ifndef NDEBUG
     if (!terminate_logged) {
-      SgDebug() << "ExpandAndBackPropogate:: no legal moves to select, even PASS:" << GO_PASS << '\n';
+      SgDebug() << "ExpandAndBackup:: no legal moves to select, even PASS:" << GO_PASS << '\n';
       terminate_logged = true;
     }
 #endif
     return false;
+  }
+
+  for (UctMoveInfo& moveInfo : state.move_info) {
+    if (moveInfo.uct_move == leafNode.MoveNoCheck()) {
+      SgDebug() << "Illegal Move generated" << "\n";
+    }
   }
 
   size_t threadId = state.thread_id;
@@ -606,16 +509,42 @@ bool UctSearch::ExpandAndBackPropogate(UctThreadState& state, const UctNode* roo
   search_tree.Expand(threadId, leafNode, state.move_info);
 
 #ifdef USE_NNEVALTHREAD
-  state.CollectFeatures(eval_thread->eval_buf.feature_buf[threadId], NUM_MAPS, depth);
+  state.CollectFeatures(eval_thread->eval_buf.feature_buf[threadId], NUM_MAPS);
+  // printTransformedFeatures(eval_thread->eval_buf.feature_buf[threadId]);
+
   state.eval_msg.state_ready = true;
   state.eval_msg.state_evaluated = false;
   state.eval_msg.WaitEvalFinish();
 
-  UpdatePriorProbability(leafNode, eval_thread->eval_buf.policy_out[threadId]);
+  UpdatePrior(leafNode, eval_thread->eval_buf.policy_out[threadId]);
   BackupTree(root, &leafNode, eval_thread->eval_buf.values_out[threadId]);
 #endif
 
   return true;
+}
+
+void UctSearch::printTransformedFeatures(char feature[][BD_SIZE][BD_SIZE]) {
+  int h = BD_SIZE;
+  int w = BD_SIZE;
+  char data[BD_SIZE*BD_SIZE*NUM_MAPS];
+
+  for (int depth = 0; depth < NUM_MAPS; ++depth) {
+    for (int i = 0; i < h; ++i) {
+      for (int j = 0; j < w; ++j) {
+        int index = UnrealGo::ArrayUtil::GetOffset({BD_SIZE, BD_SIZE, NUM_MAPS}, 3,
+                                                   {i, j, depth});
+        data[index] = feature[depth][i][j];
+      }
+    }
+  }
+
+  for (int i=0; i<BD_SIZE*BD_SIZE; ++i) {
+    for (int j=0; j<NUM_MAPS; ++j) {
+      SgDebug() << data[i*NUM_MAPS+j] << " ";
+    }
+    SgDebug() << "\n";
+  }
+  SgDebug() << "\n";
 }
 
 const UctNode*
@@ -639,26 +568,13 @@ UctSearch::FindBestChild(const UctNode& node,
       bestChild = &child;
       break;
     }
-    if (!child.HasMean()
-        && !((move_select == SG_UCTMOVESELECT_BOUND
-            || move_select == SG_UCTMOVESELECT_ESTIMATE
-        )
-            && use_rave
-            && child.HasRaveValue()
-        )
-        )
-      continue;
     UctValueType value;
     switch (move_select) {
       case SG_UCTMOVESELECT_VALUE:value = InverseEstimate(UctValueType(child.Mean()));
         break;
       case SG_UCTMOVESELECT_COUNT:value = child.MoveCount();
         break;
-      case SG_UCTMOVESELECT_BOUND:value = GetBound(use_rave, node, child);
-        break;
       case SG_UCTMOVESELECT_PUCT:value = GetCPUCTValue(node, child);
-        break;
-      case SG_UCTMOVESELECT_ESTIMATE:value = GetValueEstimate(use_rave, child);
         break;
       default:DBG_ASSERT(false);
         value = child.MoveCount();
@@ -717,7 +633,7 @@ UctValueType UctSearch::GetBound(bool useRave, const UctNode& node,
 
 UctValueType UctSearch::GetCPUCTValue(const UctNode& node, const UctNode& child) const {
 #ifdef USE_DIRECT_VISITCOUNT
-  return child.getMeanActionValue() + puct_const * child.getPrior() * sqrt(node.VisitCount()) / (1+child.VisitCount());
+  return child.MeanActionValue() + puct_const * child.getPrior() * sqrt(node.VisitCount()) / (1+child.VisitCount());
 #else
   return child.Mean() + puct_const * child.getPrior() * sqrt(node.VisitCount()) / (1 + child.VisitCount());
 #endif
@@ -727,18 +643,7 @@ UctValueType UctSearch::GetBound(bool useRave, bool useBiasTerm,
                                  UctValueType logPosCount,
                                  const UctNode& child) const {
   UctValueType value;
-  if (useRave)
-    value = GetValueEstimateRave(child);
-  else
-    value = GetValueEstimate(false, child);
-  if (bias_term_const == 0.0 || !useBiasTerm)
-    return value;
-  else {
-    auto moveCount = UctValueType(child.MoveCount());
-    UctValueType bound =
-        value + bias_term_const * sqrt(logPosCount / (moveCount + 1));
-    return bound;
-  }
+  return value;
 }
 
 UctSearchTree& UctSearch::GetTempTree() {
@@ -752,52 +657,12 @@ UctSearchTree& UctSearch::GetTempTree() {
   return tmp_search_tree;
 }
 
-UctValueType UctSearch::GetValueEstimate(bool useRave, const UctNode& child) const {
-  UctValueType value = 0;
-  UctValueType weightSum = 0;
-  bool hasValue = false;
-  UctStatistics uctStats;
-  if (child.HasMean()) {
-    uctStats.Initialize(child.Mean(), child.MoveCount());
-  }
-  int virtualLossCount = child.VirtualLossCount();
-  if (virtualLossCount > 0) {
-    uctStats.Add(InverseEstimate(0), UctValueType(virtualLossCount));
-  }
-
-  if (uctStats.IsDefined()) {
-    auto weight = UctValueType(uctStats.Count());
-    value += weight * InverseEstimate(UctValueType(uctStats.Mean()));
-    weightSum += weight;
-    hasValue = true;
-  }
-
-  if (useRave) {
-    UctStatistics raveStats;
-    if (child.HasRaveValue()) {
-      raveStats.Initialize(child.RaveValue(), child.RaveCount());
-    }
-    if (virtualLossCount > 0) {
-      raveStats.Add(0, UctValueType(virtualLossCount));
-    }
-    if (raveStats.IsDefined()) {
-      UctValueType raveCount = raveStats.Count();
-      UctValueType weight =
-          raveCount
-              / (rave_weight_param_1
-                  + rave_weight_param_2 * raveCount
-              );
-      value += weight * raveStats.Mean();
-      weightSum += weight;
-      hasValue = true;
-    }
-  }
-  if (hasValue)
-    return value / weightSum;
-  else
-    return first_play_urgency;
-}
-UctValueType UctSearch::GetMeanValue(const UctNode& child) const {
+UctValueType UctSearch::GetMeanValue(const UctNode& child, UctValueType defaultMean) const {
+#ifdef USE_DIRECT_VISITCOUNT
+  if (child.VisitCount() > 0)
+    return child.MeanActionValue();
+  return defaultMean;
+#else
   UctStatistics uctStats;
   if (child.HasMean()) {
     uctStats.Initialize(child.Mean(), child.MoveCount());
@@ -810,50 +675,8 @@ UctValueType UctSearch::GetMeanValue(const UctNode& child) const {
   if (uctStats.IsDefined())
     return UctValueType(uctStats.Mean());
   else
-    return first_play_urgency;
-}
-
-
-UctValueType UctSearch::GetValueEstimateRave(const UctNode& child) const {
-  DBG_ASSERT(use_rave);
-  UctValueType value;
-  UctStatistics uctStats;
-  if (child.HasMean()) {
-    uctStats.Initialize(child.Mean(), child.MoveCount());
-  }
-  UctStatistics raveStats;
-  if (child.HasRaveValue()) {
-    raveStats.Initialize(child.RaveValue(), child.RaveCount());
-  }
-  int virtualLossCount = child.VirtualLossCount();
-  if (virtualLossCount > 0) {
-    uctStats.Add(InverseEstimate(0), UctValueType(virtualLossCount));
-    raveStats.Add(0, UctValueType(virtualLossCount));
-  }
-  bool hasRave = raveStats.IsDefined();
-
-  if (uctStats.IsDefined()) {
-    UctValueType moveValue = InverseEstimate((UctValueType)uctStats.Mean());
-    if (hasRave) {
-      UctValueType moveCount = uctStats.Count();
-      UctValueType raveCount = raveStats.Count();
-      UctValueType weight =
-          raveCount
-              / (moveCount
-                  * (rave_weight_param_1 + rave_weight_param_2 * raveCount)
-                  + raveCount);
-      value = weight * raveStats.Mean() + (1.f - weight) * moveValue;
-    } else {
-      DBG_ASSERT(num_threads > 1 && lock_free);
-      value = moveValue;
-    }
-  } else if (hasRave)
-    value = raveStats.Mean();
-  else
-    value = first_play_urgency;
-  DBG_ASSERT(num_threads > 1
-                 || fabs(value - GetValueEstimate(use_rave, child)) < 1e-3);
-  return value;
+    return defaultMean;
+#endif
 }
 
 std::string UctSearch::LastGameSummaryLine() const {
@@ -866,22 +689,6 @@ UctValueType UctSearch::Log(UctValueType x) const {
 #else
   return log(x);
 #endif
-}
-
-
-void UctSearch::CreateChildren(UctThreadState& state,
-                               const UctNode& node,
-                               bool deleteChildTrees) {
-  size_t threadId = state.thread_id;
-  if (!search_tree.HasCapacity(threadId, state.move_info.size())) {
-    Debug(state, str(format("UctSearch: maximum tree size %1% reached")
-                         % search_tree.MaxNodes()));
-    state.tree_exceed_memory_limit = true;
-    tree_exceeds_mem_limit = true;
-    SgSynchronizeThreadMemory();
-    return;
-  }
-  search_tree.MergeChildren(threadId, node, state.move_info, deleteChildTrees);
 }
 
 void UctSearch::OnStartSearch() {
@@ -910,7 +717,6 @@ void UctSearch::PrintSearchProgress(double currTime) const {
   const UctValueType rootMoveCount = search_tree.Root().MoveCount();
   std::ostringstream out;
   const UctNode* current = &search_tree.Root();
-  bool hasKnowledge = current->KnowledgeCount() > 0;
   if (rootMoveCount > 0) {
     const UctValueType rootMean = search_tree.Root().Mean();
     out << (format("%s | %.3f | %.0f | %.1f ")
@@ -923,10 +729,6 @@ void UctSearch::PrintSearchProgress(double currTime) const {
       break;
     if (i == 0)
       out << "|";
-    if (hasKnowledge && current->KnowledgeCount() == 0) {
-      out << " ^";
-      hasKnowledge = false;
-    }
     if (i < MAX_SEQ_PRINT_LENGTH) {
       if (i == 0 || !IsPartialMove(current->Move()))
         out << " ";
@@ -960,10 +762,10 @@ UctNode* UctSearch::DeepUCTSelectBestChild(UctValueType tau, float* policy_) {
   for (UctChildNodeIterator it(search_tree, *parent); it; ++it) {
     const UctNode& child = *it;
     size_t index = (it() - parent->FirstChild());
-    densePolicy[index] = child.VisitCount();
+    densePolicy[index] = child.MoveCount();
 
     if (policy_)
-      policy_[GoPointUtil::Point2Index(child.Move())] = (float)child.VisitCount();
+      policy_[GoPointUtil::Point2Index(child.Move())] = (float)child.MoveCount();
   }
 
   if (policy_)
@@ -977,157 +779,25 @@ UctNode* UctSearch::DeepUCTSelectBestChild(UctValueType tau, float* policy_) {
   return bestChild;
 }
 
-void UctSearch::PlayGame(UctThreadState& state, GlobalRecursiveLock* lock) {
-  state.tree_exceed_memory_limit = false;
-  state.GameStart();
-  UctGameInfo& info = state.game_info;
-  info.Clear(num_playouts);
-  bool isTerminal;
-  bool abortInTree = !PlayInTree(state, isTerminal);
-  if (lock != 0)
-    lock->unlock();
+UctNode* UctSearch::DeepUCTSelectBestChild(float* policy_) {
+  UctNode* parent = &search_tree.Root();
+  if (!parent->HasChildren())
+    return nullptr;
 
-  if (!info.m_nodes.empty() && isTerminal) {
-    const UctNode& terminalNode = *info.m_nodes.back();
-    UctValueType eval = state.Evaluate();
-    if (eval > 0.6)
-      search_tree.SetProvenType(terminalNode, PROVEN_WIN);
-    else if (eval < 0.4)
-      search_tree.SetProvenType(terminalNode, PROVEN_LOSS);
-    PropagateProvenStatus(info.m_nodes);
-  }
-
-  size_t nuMovesInTree = info.m_inTreeSequence.size();
-  if (!info.m_nodes.empty() && info.m_nodes.back()->IsProven()) {
-    for (size_t i = 0; i < num_playouts; ++i) {
-      info.m_sequence[i] = info.m_inTreeSequence;
-      info.m_skipRaveUpdate[i].assign(nuMovesInTree, false);
-      UctValueType eval = info.m_nodes.back()->IsProvenWin() ? 1 : 0;
-      size_t nuMoves = info.m_sequence[i].size();
-      if (nuMoves % 2 != 0)
-        eval = InverseEval(eval);
-      info.m_aborted[i] = abortInTree || state.tree_exceed_memory_limit;
-      info.m_eval[i] = eval;
+  const UctNode* bestChild = nullptr;
+  UctValueType maxVisit = std::numeric_limits<UctValueType>::min();
+  for (UctChildNodeIterator it(search_tree, *parent); it; ++it) {
+    const UctNode& child = *it;
+    if (maxVisit < child.MoveCount()) {
+      maxVisit = child.MoveCount();
+      bestChild = &child;
     }
-  } else {
-    state.StartPlayouts();
-    for (size_t i = 0; i < num_playouts; ++i) {
-      state.StartPlayout();
-      info.m_sequence[i] = info.m_inTreeSequence;
-      info.m_skipRaveUpdate[i].assign(nuMovesInTree, false);
-      bool abort = abortInTree || state.tree_exceed_memory_limit;
-      if (!abort && !isTerminal)
-        abort = !PlayoutGame(state, i);
-      UctValueType eval;
-      if (abort)
-        eval = UnknownEval();
-      else
-        eval = state.Evaluate();
-      size_t nuMoves = info.m_sequence[i].size();
-      if (nuMoves % 2 != 0)
-        eval = InverseEval(eval);
-      info.m_aborted[i] = abort;
-      info.m_eval[i] = eval;
 
-      state.EndPlayout();
-      state.TakeBackPlayout(nuMoves - nuMovesInTree);
-    }
+    if (policy_)
+      policy_[GoPointUtil::Point2Index(child.Move())] = (float)child.MoveCount();
   }
-  state.TakeBackInTree(nuMovesInTree);
-  if (lock != 0)
-    lock->lock();
 
-  UpdateTree(info);
-  if (use_rave)
-    UpdateRaveValues(state);
-  UpdateStatistics(info);
-}
-
-
-void UctSearch::PropagateProvenStatus(const std::vector<const UctNode*>& nodes) {
-  if (nodes.size() <= 1)
-    return;
-  size_t i = nodes.size() - 2;
-  while (true) {
-    const UctNode& parent = *nodes[i];
-    UctProvenType type = PROVEN_LOSS;
-    for (UctChildNodeIterator it(search_tree, parent); it; ++it) {
-      const UctNode& child = *it;
-      if (!child.IsProven())
-        type = PROVEN_NONE;
-      else if (child.IsProvenLoss()) {
-        type = PROVEN_WIN;
-        break;
-      }
-    }
-    if (type == PROVEN_NONE)
-      break;
-    else
-      search_tree.SetProvenType(parent, type);
-    if (i == 0)
-      break;
-    --i;
-  }
-}
-
-
-bool UctSearch::PlayInTree(UctThreadState& state, bool& isTerminal) {
-  vector<GoMove>& sequence = state.game_info.m_inTreeSequence;
-  vector<const UctNode*>& nodes = state.game_info.m_nodes;
-  const UctNode* root = &search_tree.Root();
-  const UctNode* current = root;
-  if (use_virtual_loss && num_threads > 1)
-    search_tree.AddVirtualLoss(*current);
-  nodes.push_back(current);
-  bool breakAfterSelect = false;
-  isTerminal = false;
-  bool useBiasTerm = false;
-  if (--state.randomize_bias_cnt == 0) {
-    useBiasTerm = true;
-    state.randomize_bias_cnt = bias_term_freq;
-  }
-  while (true) {
-    if (bias_term_depth > 0 && sequence.size() == bias_term_depth)
-      useBiasTerm = false;
-    if (sequence.size() == max_move_length)
-      return false;
-    if (current->IsProven())
-      break;
-    if (!current->HasChildren())
-    {
-      state.move_info.clear();
-      UctProvenType provenType = PROVEN_NONE;
-      state.GenerateAllMoves(0, state.move_info, provenType);
-      if (current == root)
-        ApplyRootFilter(state.move_info);
-      if (provenType != PROVEN_NONE) {
-        search_tree.SetProvenType(*current, provenType);
-        PropagateProvenStatus(nodes);
-        break;
-      }
-      if (state.move_info.empty()) {
-        isTerminal = true;
-        break;
-      }
-      if (current->MoveCount() >= expand_thredhold) {
-        ExpandNode(state, *current);
-        if (state.tree_exceed_memory_limit)
-          return true;
-        breakAfterSelect = true;
-      } else
-        break;
-    }
-    current = &SelectChild(state.randomize_rave_cnt, useBiasTerm, *current);
-    if (use_virtual_loss && num_threads > 1)
-      search_tree.AddVirtualLoss(*current);
-    nodes.push_back(current);
-    GoMove move = current->Move();
-    state.Execute(move);
-    sequence.push_back(move);
-    if (breakAfterSelect)
-      break;
-  }
-  return true;
+  return const_cast<UctNode*>(bestChild);
 }
 
 int UctSearch::DeepUctSearchTree(UctThreadState& state, GlobalRecursiveLock* lock) {
@@ -1146,12 +816,12 @@ int UctSearch::DeepUctSearchTree(UctThreadState& state, GlobalRecursiveLock* loc
   nodes.push_back(node);
 
   while (node->HasChildren()) {
-    if (node == root)
+    if (node == root && select_with_dirichlet)
       node = SelectWithDirichletNoise(state, *node, puct_const);
     else
       node = Select(state, *node, puct_const);
     GoMove move = node->Move();
-    state.Apply(move);
+    state.Apply(move); // update state's board
     sequence.push_back(move);
     nodes.push_back(node);
     if (use_virtual_loss && num_threads > 1)
@@ -1166,38 +836,21 @@ int UctSearch::DeepUctSearchTree(UctThreadState& state, GlobalRecursiveLock* loc
 
   bool expanded = false;
   if (node != nullptr) {
-    expanded = ExpandAndBackPropogate(state, root, *node, (int)sequence.size());
+    expanded = ExpandAndBackup(state, root, *node);
   }
 #ifndef NDEBUG
   else
     SgDebug() << "DeepUctSearchTree:: NULL node " << '\n';
 #endif
+
   state.TakeBackInTree(sequence.size());
-  for (size_t i = 0; i < nodes.size(); ++i) {
-    if (use_virtual_loss && num_threads > 1)
-      search_tree.RemoveVirtualLoss(*nodes[i]);
+  if (use_virtual_loss && num_threads > 1) {
+    for (auto& vnode : nodes)
+      search_tree.RemoveVirtualLoss(*vnode);
   }
   search_stat.moves_in_tree.Add(static_cast<float>(gameInfo.m_inTreeSequence.size()));
 
   return expanded ? 1 : 0;
-}
-bool UctSearch::PlayoutGame(UctThreadState& state, std::size_t playout) {
-  UctGameInfo& info = state.game_info;
-  vector<GoMove>& sequence = info.m_sequence[playout];
-  vector<bool>& skipRaveUpdate = info.m_skipRaveUpdate[playout];
-  while (true) {
-    if (sequence.size() == max_move_length)
-      return false;
-    bool skipRave = false;
-    GoMove move = state.GeneratePlayoutMove(skipRave);
-    if (move == GO_NULLMOVE)
-      break;
-
-    state.ExecutePlayout(move);
-    sequence.push_back(move);
-    skipRaveUpdate.push_back(skipRave);
-  }
-  return true;
 }
 
 UctValueType UctSearch::StartSearchThread(UctValueType maxGames, double maxTime,
@@ -1205,66 +858,7 @@ UctValueType UctSearch::StartSearchThread(UctValueType maxGames, double maxTime,
                                           const vector<GoMove>& rootFilter,
                                           UctSearchTree* initTree,
                                           UctEarlyAbortParam* earlyAbort) {
-  search_timer.Start();
-  root_filter = rootFilter;
-  if (log_games) {
-    logger_stream.open(mpi_synchronizer->ToNodeFilename(log_file_name).c_str());
-    logger_stream << "PreStartSearch maxGames=" << maxGames << '\n';
-  }
-  max_games = maxGames;
-  max_time = maxTime;
-  early_abort_param.reset(nullptr);
-  if (earlyAbort != nullptr)
-    early_abort_param.reset(new UctEarlyAbortParam(*earlyAbort));
-
-  Msg msg;
-  msg.type = MSG_SEARCH_LOOP;
-  for (auto& thread : search_threads) {
-    thread->m_state->search_initialised = false;
-  }
-  PreStartSearch(rootFilter, initTree);
-  UctValueType pruneMinCount = min_prune_cnt;
-  while (true) {
-    tree_exceeds_mem_limit = false;
-    SgSynchronizeThreadMemory();
-    for (auto& thread : search_threads) {
-      thread->NotifyStartPlay(msg);
-    }
-    for (auto& thread : search_threads) {
-      thread->WaitPlayFinished();
-    }
-
-    if (search_aborted || !prune_full_tree)
-      break;
-    else {
-      double startPruneTime = search_timer.GetTime();
-      SgDebug() << "UctSearch: pruning nodes with count < "
-                << pruneMinCount << " (at time " << fixed << setprecision(1)
-                << startPruneTime << ")\n";
-      UctSearchTree& tempTree = GetTempTree();
-      search_tree.CopyPruneLowCount(tempTree, pruneMinCount, true);
-      auto prunedSizePercentage =
-          static_cast<int>(tempTree.NuNodes() * 100 / search_tree.NuNodes());
-      SgDebug() << "UctSearch: pruned size: " << tempTree.NuNodes()
-                << " (" << prunedSizePercentage << "%) time: "
-                << (search_timer.GetTime() - startPruneTime) << "\n";
-      if (prunedSizePercentage > 50)
-        pruneMinCount *= 2;
-      else
-        pruneMinCount = min_prune_cnt;
-      search_tree.Swap(tempTree);
-    }
-  }
-  EndSearch();
-  search_stat.time_elapsed = search_timer.GetTime();
-  if (search_stat.time_elapsed > numeric_limits<double>::epsilon())
-    search_stat.searches_per_second = GamesPlayed() / search_stat.time_elapsed;
-  if (log_games)
-    logger_stream.close();
-  FindBestSequence(sequence);
-  return search_tree.Root().MoveCount() > 0 ?
-         search_tree.Root().Mean() :
-         UctValueType(0.5);
+  return 0;
 }
 
 UctValueType UctSearch::StartDeepUCTSearchThread(UctValueType maxGames, double maxTime,
@@ -1296,7 +890,7 @@ UctValueType UctSearch::StartDeepUCTSearchThread(UctValueType maxGames, double m
   PreStartSearch(rootFilter, initTree, syncState);
 
 #ifdef USE_NNEVALTHREAD
-  if (eval_thread == 0)
+  if (eval_thread == nullptr)
     eval_thread.reset(new NetworkEvalThread(*this));
   if (!check_point.empty()) {
     eval_thread->UpdateCheckPoint(check_point);
@@ -1347,7 +941,8 @@ UctValueType UctSearch::StartDeepUCTSearchThread(UctValueType maxGames, double m
     search_stat.searches_per_second = GamesPlayed() / search_stat.time_elapsed;
   if (log_games)
     logger_stream.close();
-  UctNode* node = DeepUCTSelectBestChild(tau, policy_);
+  // UctNode* node = DeepUCTSelectBestChild(tau, policy_);
+  UctNode* node = DeepUCTSelectBestChild(policy_);
   if (node) {
     sequence_.push_back(node->Move());
     if (bestchild_)
@@ -1370,45 +965,6 @@ UctValueType UctSearch::EstimateGameScore() {
   return score;
 }
 
-
-void UctSearch::SearchLoop(UctThreadState& state, GlobalRecursiveLock* lock) {
-  if (!state.search_initialised) {
-    OnThreadStartSearch(state);
-    state.search_initialised = true;
-  }
-
-  if (NumberThreads() == 1 || lock_free)
-    lock = nullptr;
-  if (lock != nullptr)
-    lock->lock();
-  state.tree_exceed_memory_limit = false;
-  while (!state.tree_exceed_memory_limit) {
-    PlayGame(state, lock);
-    OnSearchIteration(num_games + 1, state.thread_id,
-                      state.game_info);
-    if (log_games)
-      logger_stream << SummaryLine(state.game_info) << '\n';
-
-#ifdef LOG_SEARCH
-    SgDebug() << "Games:" << num_games << '\n';
-#endif
-    ++num_games;
-    if (tree_exceeds_mem_limit)
-      break;
-    if (search_aborted || CheckAbortSearch(state)) {
-      search_aborted = true;
-      SgSynchronizeThreadMemory();
-      break;
-    }
-  }
-  if (lock != nullptr)
-    lock->unlock();
-
-  search_finish_barier->wait();
-  if (search_aborted || !prune_full_tree)
-    OnThreadEndSearch(state);
-}
-
 void UctSearch::DeepUCTSearchLoop(UctThreadState& state, GlobalRecursiveLock* lock) {
   if (!state.search_initialised) {
     OnThreadStartSearch(state);
@@ -1429,13 +985,15 @@ void UctSearch::DeepUCTSearchLoop(UctThreadState& state, GlobalRecursiveLock* lo
       search_aborted = true;
       break;
     }
-    if (tree_exceeds_mem_limit)
+    if (tree_exceeds_mem_limit) {
+      SgDebug() << "tree limit exceeded" << "\n";
       break;
-    if (search_aborted || CheckAbortForDeepSearch(state)) {
+    }
+    /*if (search_aborted || CheckAbortForDeepSearch(state)) {
       search_aborted = true;
       SgSynchronizeThreadMemory();
       break;
-    }
+    }*/
   }
 
 #ifdef USE_NNEVALTHREAD
@@ -1501,110 +1059,22 @@ void UctSearch::OnThreadEndSearch(UctThreadState& state) {
   mpi_synchronizer->OnThreadEndSearch(*this, state);
 }
 
-GoPoint UctSearch::SearchOnePly(UctValueType maxGames, double maxTime,
-                                UctValueType& value) {
-  if (search_threads.size() == 0)
-    CreateThreads();
-  OnStartSearch();
-  UctThreadState& state = ThreadState(0);
-  state.StartSearch();
-  vector<UctMoveInfo> moves;
-  UctProvenType provenType;
-  state.GameStart();
-  state.GenerateAllMoves(0, moves, provenType);
-  vector<UctStatistics> statistics(moves.size());
-  UctValueType games = 0;
-  search_timer.Start();
-  UctGameInfo& info = state.game_info;
-  while (games < maxGames && search_timer.GetTime() < maxTime && !ForceAbort()) {
-    for (size_t i = 0; i < moves.size(); ++i) {
-      state.GameStart();
-      info.Clear(1);
-      GoMove move = moves[i].uct_move;
-      state.Execute(move);
-      info.m_inTreeSequence.push_back(move);
-      info.m_sequence[0].push_back(move);
-      info.m_skipRaveUpdate[0].push_back(false);
-      state.StartPlayouts();
-      state.StartPlayout();
-      bool abortGame = !PlayoutGame(state, 0);
-      UctValueType eval;
-      if (abortGame)
-        eval = UnknownEval();
-      else
-        eval = state.Evaluate();
-      state.EndPlayout();
-      state.TakeBackPlayout(info.m_sequence[0].size() - 1);
-      state.TakeBackInTree(1);
-      statistics[i].Add(info.m_sequence[0].size() % 2 == 0 ?
-                        eval : InverseEval(eval));
-      OnSearchIteration(games + 1, 0, info);
-      games += 1;
-    }
-  }
-  GoMove bestMove = GO_NULLMOVE;
-  for (size_t i = 0; i < moves.size(); ++i) {
-    SgDebug() << MoveString(moves[i].uct_move)
-              << ' ' << statistics[i].Mean()
-              << ", " << statistics[i].Count() << " Simulations"
-              << '\n';
-    if (bestMove == GO_NULLMOVE || statistics[i].Mean() > value) {
-      bestMove = moves[i].uct_move;
-      value = statistics[i].Mean();
-    }
-  }
-  return bestMove;
-}
-
-const UctNode& UctSearch::SelectChild(int& randomizeCounter,
-                                      bool useBiasTerm,
-                                      const UctNode& node) {
-  bool useRave = use_rave;
-  if (randomize_rave_freq > 0 && --randomizeCounter == 0) {
-    useRave = false;
-    randomizeCounter = randomize_rave_freq;
-  }
-  DBG_ASSERT(node.HasChildren());
-  UctValueType posCount = node.PosCount();
-  int virtualLossCount = node.VirtualLossCount();
-  if (virtualLossCount > 1) {
-    posCount += UctValueType(virtualLossCount - 1);
-  }
-  if (posCount == 0)
-    return *UctChildNodeIterator(search_tree, node);
-
-  const UctValueType logPosCount = Log(posCount);
-  const UctNode* bestChild = 0;
-  UctValueType bestUpperBound = 0;
-  const UctValueType predictorWeight = 0.0;
-  auto epsilon = UctValueType(1e-7);
-  for (UctChildNodeIterator it(search_tree, node); it; ++it) {
-    const UctNode& child = *it;
-    if (!child.IsProvenWin())
-    {
-      UctValueType bound = GetBound(useRave, useBiasTerm, logPosCount, child) -
-          predictorWeight * child.PredictorValue();
-      if (bestChild == 0 || bound > bestUpperBound + epsilon) {
-        bestChild = &child;
-        bestUpperBound = bound;
-      }
-    }
-  }
-  if (bestChild != nullptr)
-    return *bestChild;
-  return *node.FirstChild();
-}
-
 const UctNode* UctSearch::Select(UctThreadState& state, const UctNode& parent, UctValueType c_puct) {
   SuppressUnused(state);
   DBG_ASSERT(parent.HasChildren());
 
-  UctValueType posCount = parent.PosCount();
+  UctValueType total_movecount = 0; // = parent.PosCount();
   int virtualLossCount = parent.VirtualLossCount();
   if (virtualLossCount > 1) {
-    posCount += UctValueType(virtualLossCount - 1);
+    total_movecount += UctValueType(virtualLossCount - 1);
+  }
+  for (UctChildNodeIterator it(search_tree, parent); it; ++it) {
+    const UctNode& child = *it;
+    total_movecount += child.VisitCount();
   }
 
+  float spc = (float)std::max(std::sqrt(total_movecount), 1.0);
+  UctValueType defaultMean = -parent.MeanActionValue();
   UctValueType maxValue = std::numeric_limits<UctValueType>::min();
   const UctNode* bestChild = nullptr;
   for (UctChildNodeIterator it(search_tree, parent); it; ++it) {
@@ -1612,7 +1082,7 @@ const UctNode* UctSearch::Select(UctThreadState& state, const UctNode& parent, U
     if (child.Move() != GO_PASS) {
       if (num_threads == 1)
         DBG_ASSERT(child.MoveCount() == child.VisitCount());
-      UctValueType value = GetMeanValue(child) + c_puct * child.getPrior() * sqrt(posCount) / (1 + child.MoveCount());
+      UctValueType value = GetMeanValue(child, defaultMean) + c_puct * child.getPrior() * spc / (1 + child.VisitCount());
 
       if (bestChild == nullptr || value > maxValue) {
         bestChild = &child;
@@ -1631,11 +1101,17 @@ const UctNode*
 UctSearch::SelectWithDirichletNoise(UctThreadState& state, const UctNode& parent, UctValueType pCut) {
   SuppressUnused(state);
   DBG_ASSERT(parent.HasChildren());
-  UctValueType posCount = parent.PosCount();
+  UctValueType parent_count = 0; //= parent.PosCount();
   int virtualLossCount = parent.VirtualLossCount();
   if (virtualLossCount > 1) {
-    posCount += UctValueType(virtualLossCount - 1);
+    parent_count += UctValueType(virtualLossCount - 1);
   }
+
+  for (UctChildNodeIterator it(search_tree, parent); it; ++it) {
+    const UctNode& child = *it;
+    parent_count += child.MoveCount();
+  }
+  float spc = (float)std::max(sqrt(parent_count), 1.0);
 
   double noise[GO_MAX_MOVES];
   generateDirichlet(noise, parent.NumChildren());
@@ -1648,7 +1124,7 @@ UctSearch::SelectWithDirichletNoise(UctThreadState& state, const UctNode& parent
     if (child.Move() != GO_PASS) {
       UctValueType prior = 0.75 * child.getPrior() + 0.25 * noise[idx];
       UctValueType uctValue =
-          GetMeanValue(child) + pCut * prior * sqrt(posCount) / (1 + child.VisitCount() + child.VirtualLossCount());
+          GetMeanValue(child) + pCut * prior * spc / (1 + child.VisitCount() + child.VirtualLossCount());
       if (bestChild == nullptr || uctValue > maxValue) {
         bestChild = &child;
         maxValue = uctValue;
@@ -1684,9 +1160,6 @@ void UctSearch::SetCheckTimeInterval(UctValueType n) {
 }
 
 void UctSearch::SetRave(bool enable) {
-  if (enable && move_range <= 0)
-    throw SgException("RAVE not supported for this game");
-  use_rave = enable;
 }
 
 void UctSearch::SetThreadStateFactory(UctThreadStateFactory* factory) {
@@ -1694,13 +1167,14 @@ void UctSearch::SetThreadStateFactory(UctThreadStateFactory* factory) {
   th_state_factory.reset(factory);
   DeleteThreads();
 }
+
 void UctSearch::PreStartSearch(const vector<GoMove>& rootFilter, UctSearchTree* initTree, bool syncState) {
   if (search_threads.size() == 0)
     CreateThreads();
   if (num_threads > 1 && SgTime::DefaultMode() == SG_TIME_CPU)
     SgWarning() << "UctSearch: using cpu time with multiple threads\n";
-  rave_weight_param_1 = UctValueType(1.0 / initial_rave_weight);
-  rave_weight_param_2 = UctValueType(1.0 / final_rave_weight);
+  rave_weight_param_1 = (1.0 / initial_rave_weight);
+  rave_weight_param_2 = (1.0 / final_rave_weight);
   if (initTree == nullptr)
     search_tree.Clear();
   else {
@@ -1780,98 +1254,18 @@ void UctSearch::UpdateCheckTimeInterval(double time) {
     check_interval = 1;
 }
 
-
-void UctSearch::UpdateRaveValues(UctThreadState& state) {
-  for (size_t i = 0; i < num_playouts; ++i)
-    UpdateRaveValues(state, i);
-}
-
-void UctSearch::UpdateRaveValues(UctThreadState& state,
-                                 std::size_t playout) {
-  UctGameInfo& info = state.game_info;
-  const vector<GoMove>& sequence = info.m_sequence[playout];
-  if (sequence.size() == 0)
-    return;
-  DBG_ASSERT(move_range > 0);
-  size_t* firstPlay = state.first_play.get();
-  size_t* firstPlayOpp = state.first_play_opp.get();
-  std::fill_n(firstPlay, move_range, numeric_limits<size_t>::max());
-  std::fill_n(firstPlayOpp, move_range, numeric_limits<size_t>::max());
-  const vector<const UctNode*>& nodes = info.m_nodes;
-  const vector<bool>& skipRaveUpdate = info.m_skipRaveUpdate[playout];
-  UctValueType eval = info.m_eval[playout];
-  UctValueType invEval = InverseEval(eval);
-  size_t nuNodes = nodes.size();
-  size_t i = sequence.size() - 1;
-  bool opp = (i % 2 != 0);
-  for (; i >= nuNodes; --i) {
-    DBG_ASSERT(i < skipRaveUpdate.size());
-    DBG_ASSERT(i < sequence.size());
-    if (!skipRaveUpdate[i]) {
-      GoMove mv = sequence[i];
-      size_t& first = (opp ? firstPlayOpp[mv] : firstPlay[mv]);
-      if (i < first)
-        first = i;
-    }
-    opp = !opp;
-  }
-
-  while (true) {
-    DBG_ASSERT(i < skipRaveUpdate.size());
-    DBG_ASSERT(i < sequence.size());
-    DBG_ASSERT(i >= info.m_inTreeSequence.size() || !skipRaveUpdate[i]);
-    if (!skipRaveUpdate[i]) {
-      GoMove mv = sequence[i];
-      size_t& first = (opp ? firstPlayOpp[mv] : firstPlay[mv]);
-      if (i < first)
-        first = i;
-      if (opp)
-        UpdateRaveValues(state, playout, invEval, i,
-                         firstPlayOpp, firstPlay);
-      else
-        UpdateRaveValues(state, playout, eval, i,
-                         firstPlay, firstPlayOpp);
-    }
-    if (i == 0)
-      break;
-    --i;
-    opp = !opp;
-  }
-}
-
-void UctSearch::UpdateRaveValues(UctThreadState& state,
-                                 std::size_t playout, UctValueType eval,
-                                 std::size_t i,
-                                 const std::size_t firstPlay[],
-                                 const std::size_t firstPlayOpp[]) {
-  DBG_ASSERT(i < state.game_info.m_nodes.size());
-  const UctNode* node = state.game_info.m_nodes[i];
-  if (!node->HasChildren())
-    return;
-  size_t len = state.game_info.m_sequence[playout].size();
-  for (UctChildNodeIterator it(search_tree, *node); it; ++it) {
-    const UctNode& child = *it;
-    GoMove mv = child.Move();
-    size_t first = firstPlay[mv];
-    DBG_ASSERT(first >= i);
-    if (first == numeric_limits<size_t>::max())
-      continue;
-    if (rave_check_same && SgUtil::InRange(firstPlayOpp[mv], i, first))
-      continue;
-    UctValueType weight;
-    if (weight_rave_updates)
-      weight = 2 - UctValueType(first - i) / UctValueType(len - i);
-    else
-      weight = 1;
-    search_tree.AddRaveValue(child, eval, weight);
-  }
-}
-
-void UctSearch::UpdatePriorProbability(const UctNode& node, UctValueType actionProbs[]) {
+void UctSearch::UpdatePrior(const UctNode& node, UctValueType* policies) {
+  UctValueType legalSum = 0;
   for (UctChildNodeIterator it(search_tree, node); it; ++it) {
     const UctNode& child = *it;
     int index = GoPointUtil::Point2Index(child.Move());
-    const_cast<UctNode&>(child).SetPrior(actionProbs[index]);
+    legalSum += policies[index];
+  }
+
+  for (UctChildNodeIterator it(search_tree, node); it; ++it) {
+    const UctNode& child = *it;
+    int index = GoPointUtil::Point2Index(child.Move());
+    const_cast<UctNode&>(child).SetPrior(policies[index]/legalSum);
   }
 }
 
@@ -1885,30 +1279,13 @@ void UctSearch::UpdateStatistics(const UctGameInfo& info) {
   }
 }
 
-void UctSearch::UpdateTree(const UctGameInfo& info) {
-  UctValueType eval = 0;
-  for (size_t i = 0; i < num_playouts; ++i)
-    eval += info.m_eval[i];
-  eval /= UctValueType(num_playouts);
-  UctValueType inverseEval = InverseEval(eval);
-  const vector<const UctNode*>& nodes = info.m_nodes;
-  auto count =
-      UctValueType(m_updateMultiplePlayoutsAsSingle ? 1 : num_playouts);
-  for (size_t i = 0; i < nodes.size(); ++i) {
-    const UctNode& node = *nodes[i];
-    const UctNode* father = (i > 0 ? nodes[i - 1] : 0);
-    search_tree.AddGameResults(node, father, i % 2 == 0 ? eval : inverseEval,
-                               count);
-    if (use_virtual_loss && num_threads > 1)
-      search_tree.RemoveVirtualLoss(node);
-  }
-}
 void UctSearch::BackupTree(const UctNode* root, const UctNode* node, UctValueType value) {
   auto* current = const_cast<UctNode*> (node);
   while (true) {
-    search_tree.AddGameResults(*current, current->Parent(), value, 1);
 #ifdef USE_DIRECT_VISITCOUNT
     current->AddValue(value);
+#else
+    (const_cast<UctNode*>(node))->AddGameResults(value, 1);
 #endif
     value = UctValueUtil::MinusInverseValue(value);
     if (current == root)

@@ -38,7 +38,6 @@ struct UctGameInfo {
 
   std::vector<bool> m_aborted;
   std::vector<const UctNode *> m_nodes;
-  std::vector<std::vector<bool> > m_skipRaveUpdate;
 
   void Clear(std::size_t numberPlayouts);
   void Clear();
@@ -47,10 +46,9 @@ struct UctGameInfo {
 enum UctMoveSelect {
   SG_UCTMOVESELECT_VALUE,
   SG_UCTMOVESELECT_COUNT,
-  SG_UCTMOVESELECT_BOUND,
   SG_UCTMOVESELECT_PUCT,
-  SG_UCTMOVESELECT_ESTIMATE
 };
+
 enum EvalMsgType {
   MSG_EVAL,
   MSG_END_SEARCH,
@@ -95,7 +93,6 @@ class UctThreadState {
   virtual bool WinTheGame() = 0;
   virtual bool TrompTaylorPassWins() = 0;
   virtual void CollectFeatures(char feature[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures) = 0;
-  virtual void CollectFeatures(char feature[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures, int maxSteps) = 0;
 
   virtual void Execute(GoMove move) = 0;
   virtual void Apply(GoMove move) = 0;
@@ -211,11 +208,10 @@ class UctSearch {
   int DeepUctSearchTree(UctThreadState &state, GlobalRecursiveLock *lock);
   const UctNode *Select(UctThreadState &state, const UctNode &parent, UctValueType c_puct);
   const UctNode *SelectWithDirichletNoise(UctThreadState &state, const UctNode &parent, UctValueType pCut);
-  bool ExpandAndBackPropogate(UctThreadState &state, const UctNode *root, const UctNode &leafNode, int depth);
+  bool ExpandAndBackup(UctThreadState& state, const UctNode* root, const UctNode& leafNode);
   void generateDirichlet(double out_[], size_t length);
 
   void GenerateAllMoves(std::vector<UctMoveInfo> &moves);
-  void PlayGame();
   void PreStartSearch(const std::vector<GoMove> &rootFilter = std::vector<GoMove>(), UctSearchTree *initTree = nullptr,
                       bool syncState = true);
   void EndSearch();
@@ -236,12 +232,12 @@ class UctSearch {
                                       UctEarlyAbortParam *earlyAbort = nullptr,
                                       bool syncState = true);
   void SyncStateAgainst(GoMove move, SgBlackWhite color);
-  GoPoint SearchOnePly(UctValueType maxGames, double maxTime,
-                       UctValueType &value);
   void PrepareGamePlay();
   UctValueType EstimateGameScore();
   void UpdateCheckPoint(const std::string &checkpoint);
   const std::string &getCheckPoint();
+  void printTransformedFeatures(char feature[][BD_SIZE][BD_SIZE]);
+
   const UctNode *FindBestChild(const UctNode &node, const std::vector<GoMove> *excludeMoves = nullptr) const;
   void FindBestSequence(std::vector<GoMove> &sequence) const;
 
@@ -277,8 +273,6 @@ class UctSearch {
 
   int RandomizeRaveFrequency() const;
   void SetRandomizeRaveFrequency(int frequency);
-  bool RaveCheckSame() const;
-  void SetRaveCheckSame(bool enable);
 
   UctValueType FirstPlayUrgency() const;
   void SetFirstPlayUrgency(UctValueType firstPlayUrgency);
@@ -398,7 +392,6 @@ class UctSearch {
   std::unique_ptr<UctThreadStateFactory> th_state_factory;
   bool log_games;
   bool prune_tree;
-  bool use_rave;
   unsigned int max_knowledge_threads;
   volatile bool search_aborted;
   volatile bool tree_exceeds_mem_limit;
@@ -408,7 +401,6 @@ class UctSearch {
   std::unique_ptr<UctEarlyAbortParam> early_abort_param;
 
   UctMoveSelect move_select;
-  bool rave_check_same;
   int randomize_rave_freq;
   bool lock_free;
   bool weight_rave_updates;
@@ -442,6 +434,7 @@ class UctSearch {
   UctValueType puct_const;
   double max_time;
   bool use_virtual_loss;
+  bool select_with_dirichlet;
   std::string log_file_name;
   SgTimer search_timer;
   UctSearchTree search_tree;
@@ -467,47 +460,27 @@ class UctSearch {
   bool sync_state;
   boost::shared_ptr<MpiSynchronizer> mpi_synchronizer;
 
-
-  void ApplyRootFilter(std::vector<UctMoveInfo> &moves);
-  void PropagateProvenStatus(const std::vector<const UctNode *> &nodes);
   bool CheckAbortForDeepSearch(UctThreadState &state);
-  bool CheckAbortSearch(UctThreadState &state);
   bool CheckEarlyAbort() const;
   bool CheckCountAbort(UctThreadState &state,
                        UctValueType remainingGames) const;
   void Debug(const UctThreadState &state, const std::string &textLine);
   void DeleteThreads();
-  void ExpandNode(UctThreadState &state, const UctNode &node);
-  void CreateChildren(UctThreadState &state, const UctNode &node,
-                      bool deleteChildTrees);
   UctValueType GetBound(bool useRave, bool useBiasTerm,
                       UctValueType logPosCount,
                       const UctNode &child) const;
-  UctValueType GetValueEstimate(bool useRave, const UctNode &child) const;
-  UctValueType GetMeanValue(const UctNode& child) const;
-  UctValueType GetValueEstimateRave(const UctNode &child) const;
+  UctValueType GetMeanValue(const UctNode& child, UctValueType defaultMean = 0.0) const;
   UctValueType Log(UctValueType x) const;
-  void PlayGame(UctThreadState &state, GlobalRecursiveLock *lock);
   void AddDirichletNoise(const UctNode *root);
   void DeepUCTSearchLoop(UctThreadState &state, GlobalRecursiveLock *lock);
   UctValueType EstimateScore(UctThreadState &state);
   UctNode *DeepUCTSelectBestChild(UctValueType tau, float* policy = 0);
-  bool PlayInTree(UctThreadState &state, bool &isTerminal);
-  bool PlayoutGame(UctThreadState &state, std::size_t playout);
+  UctNode *DeepUCTSelectBestChild(float* policy = 0);
   void PrintSearchProgress(double currTime) const;
-  void SearchLoop(UctThreadState &state, GlobalRecursiveLock *lock);
-  const UctNode &SelectChild(int &randomizeCounter, bool useBiasTerm, const UctNode &node);
   std::string SummaryLine(const UctGameInfo &info) const;
   void UpdateCheckTimeInterval(double time);
-  void UpdatePriorProbability(const UctNode &node, UctValueType actionProbs[]);
-  void UpdateRaveValues(UctThreadState &state);
-  void UpdateRaveValues(UctThreadState &state, std::size_t playout);
-  void UpdateRaveValues(UctThreadState &state, std::size_t playout,
-                        UctValueType eval, std::size_t i,
-                        const std::size_t firstPlay[],
-                        const std::size_t firstPlayOpp[]);
+  void UpdatePrior(const UctNode& node, UctValueType* policies);
   void UpdateStatistics(const UctGameInfo &info);
-  void UpdateTree(const UctGameInfo &info);
   void BackupTree(const UctNode *root, const UctNode *node, UctValueType value);
 };
 
@@ -600,10 +573,6 @@ inline bool UctSearch::UpdateMultiplePlayoutsAsSingle() const {
   return m_updateMultiplePlayoutsAsSingle;
 }
 
-inline void UctSearch::PlayGame() {
-  PlayGame(ThreadState(0), 0);
-}
-
 inline bool UctSearch::PruneFullTree() const {
   return prune_full_tree;
 }
@@ -613,11 +582,7 @@ inline UctValueType UctSearch::PruneMinCount() const {
 }
 
 inline bool UctSearch::Rave() const {
-  return use_rave;
-}
-
-inline bool UctSearch::RaveCheckSame() const {
-  return rave_check_same;
+  return false;
 }
 
 inline float UctSearch::RaveWeightInitial() const {
@@ -703,10 +668,6 @@ inline int UctSearch::RandomizeRaveFrequency() const {
 
 inline void UctSearch::SetRandomizeRaveFrequency(int frequency) {
   randomize_rave_freq = frequency;
-}
-
-inline void UctSearch::SetRaveCheckSame(bool enable) {
-  rave_check_same = enable;
 }
 
 inline void UctSearch::SetRaveWeightFinal(float value) {

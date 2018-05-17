@@ -331,17 +331,9 @@ GoPoint GoUctPlayer<SEARCH, THREADSTATE>::GenMove(const SgTimeRecord &time,
     else
       maxTime = m_timeControl.TimeForCurrentMove(time,
                                                  !m_writeDebugOutput);
-    if (m_searchMode == GOUCT_SEARCHMODE_ONEPLY) {
-      m_search.SetToPlay(toPlay);
-      UctValueType ignoreValue;
-      move = m_search.SearchOnePly(m_maxGames, maxTime, ignoreValue);
-      if (move == GO_NULLMOVE)
-        move = GO_PASS;
-    } else {
-      DBG_ASSERT(m_searchMode == GOUCT_SEARCHMODE_UCT);
-      move = DoSearch(toPlay, maxTime, false);
-      m_statistics.m_gamesPerSecond.Add(m_search.Statistics().searches_per_second);
-    }
+    DBG_ASSERT(m_searchMode == GOUCT_SEARCHMODE_UCT);
+    move = DoSearch(toPlay, maxTime, false);
+    m_statistics.m_gamesPerSecond.Add(m_search.Statistics().searches_per_second);
   }
   return move;
 }

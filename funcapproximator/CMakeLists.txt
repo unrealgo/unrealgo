@@ -9,7 +9,7 @@ SET(SRC_FILES
         DlGraphUtil.cc
         DlTFNetworkEvaluator.cc
         DlCheckPoint.cc
-        DlConfig.cc)
+        DlConfig.cc )
 
 include_directories(./
         ${PROJECT_SOURCE_DIR}

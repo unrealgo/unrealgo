@@ -49,10 +49,7 @@ void UctNodeAllocator::SetMaxNodes(std::size_t maxNodes) {
 std::ostream &operator<<(std::ostream &stream, const UctMoveInfo &info) {
   stream << "move = " << GoWritePoint(info.uct_move)
          << "value = " << info.uct_value
-         << "count = " << info.visit_count
-         << "rave value = " << info.rave_value
-         << "rave count = " << info.rave_cnt
-         << "predictor value = " << info.predictor_val;
+         << "count = " << info.visit_count;
   return stream;
 }
 
@@ -67,15 +64,8 @@ std::ostream &operator<<(std::ostream &stream, const UctNode &node) {
   else
     stream << "undefined";
   stream << " pos-count = " << node.PosCount()
-         << " move-count = " << node.MoveCount()
-         << " rave-value = ";
-  if (node.HasRaveValue())
-    stream << node.RaveValue();
-  else
-    stream << "undefined";
-  stream << " predictor-value = " << node.PredictorValue()
-         << " Virtual-Loss-Count = " << node.VirtualLossCount()
-         << " Knowledge-Count = " << node.KnowledgeCount()
+         << " move-count = " << node.MoveCount();
+  stream << " Virtual-Loss-Count = " << node.VirtualLossCount()
          << ' ' << node.ProvenType()
          << '\n';
   return stream;
@@ -206,7 +196,6 @@ UctProvenType UctSearchTree::CopySubtree(UctSearchTree &targetTree, UctNode &tar
     }
   }
   if (abort) {
-    targetNode.SetPosCount(0);
     targetNode.SetProvenType(PROVEN_NONE);
     return PROVEN_NONE;
   }
@@ -318,58 +307,6 @@ void UctSearchTree::ExtractSubtree(UctSearchTree &target, const UctNode &node,
   CopySubtree(target, target.tree_root, node, minCount, allocatorId, warnTruncate,
               abort, timer, maxTime,  true);
   SgSynchronizeThreadMemory();
-}
-
-void UctSearchTree::MergeChildren(std::size_t allocatorId, const UctNode &node,
-                              const std::vector<UctMoveInfo> &moves,
-                              bool deleteChildTrees) {
-  DBG_ASSERT(Contains(node));
-  auto &nonConstNode = const_cast<UctNode &>(node);
-  DBG_ASSERT(moves.size() <= std::size_t(std::numeric_limits<int>::max()));
-  size_t nuNewChildren = moves.size();
-
-  if (nuNewChildren == 0) {
-    nonConstNode.SetNumChildren(0);
-    SgSynchronizeThreadMemory();
-    nonConstNode.SetFirstChild(nullptr);
-    return;
-  }
-
-  UctNodeAllocator &allocator = Allocator(allocatorId);
-  DBG_ASSERT(allocator.HasCapacity(nuNewChildren));
-
-  UctValueType parentCount = 0;
-  const UctNode *newFirstChild = allocator.Create(moves, &node, parentCount);
-  for (std::size_t i = 0; i < moves.size(); ++i) {
-    auto *newChild = const_cast<UctNode *>(&newFirstChild[i]);
-    for (UctChildNodeIterator it(*this, node); it; ++it) {
-      const UctNode &oldChild = *it;
-      if (oldChild.Move() == moves[i].uct_move) {
-        newChild->MergeResults(oldChild);
-        newChild->SetKnowledgeCount(oldChild.KnowledgeCount());
-        if (!deleteChildTrees) {
-          newChild->SetPosCount(oldChild.PosCount());
-          parentCount += oldChild.MoveCount();
-          if (oldChild.HasChildren()) {
-            newChild->SetFirstChild(oldChild.FirstChild());
-            newChild->SetNumChildren(oldChild.NumChildren());
-          }
-        }
-        break;
-      }
-    }
-  }
-  nonConstNode.SetPosCount(parentCount);
-  SgSynchronizeThreadMemory();
-  if (nonConstNode.NumChildren() < nuNewChildren) {
-    nonConstNode.SetFirstChild(newFirstChild);
-    SgSynchronizeThreadMemory();
-    nonConstNode.SetNumChildren(nuNewChildren);
-  } else {
-    nonConstNode.SetNumChildren(nuNewChildren);
-    SgSynchronizeThreadMemory();
-    nonConstNode.SetFirstChild(newFirstChild);
-  }
 }
 
 std::size_t UctSearchTree::NuNodes() const {

@@ -49,12 +49,8 @@ UctMoveSelect SgGtpUtil::MoveSelectArg(const GtpCommand &cmd, size_t number) {
     return SG_UCTMOVESELECT_VALUE;
   if (arg == "count")
     return SG_UCTMOVESELECT_COUNT;
-  if (arg == "bound")
-    return SG_UCTMOVESELECT_BOUND;
   if (arg == "puct")
     return SG_UCTMOVESELECT_PUCT;
-  if (arg == "estimate")
-    return SG_UCTMOVESELECT_ESTIMATE;
   throw GtpFailure() << "unknown move select argument \"" << arg << '"';
 }
 
@@ -62,9 +58,7 @@ std::string SgGtpUtil::MoveSelectToString(UctMoveSelect moveSelect) {
   switch (moveSelect) {
     case SG_UCTMOVESELECT_VALUE:return "value";
     case SG_UCTMOVESELECT_COUNT:return "count";
-    case SG_UCTMOVESELECT_BOUND:return "bound";
     case SG_UCTMOVESELECT_PUCT:return "puct";
-    case SG_UCTMOVESELECT_ESTIMATE:return "estimate";
     default:DBG_ASSERT(false);
       return "?";
   }

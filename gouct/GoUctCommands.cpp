@@ -726,15 +726,6 @@ void GoUctCommands::CmdRaveValues(GtpCommand &cmd) {
     throw GtpFailure("RAVE not enabled");
   GoPointArray<string> array("\"\"");
   const UctSearchTree &tree = search.Tree();
-  for (UctChildNodeIterator it(tree, tree.Root()); it; ++it) {
-    const UctNode &child = *it;
-    GoPoint p = child.Move();
-    if (p == GO_PASS || !child.HasRaveValue())
-      continue;
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(2) << child.RaveValue();
-    array[p] = out.str();
-  }
   cmd << '\n'
       << SgWritePointArray<string>(array, m_bd.Size());
 }
@@ -968,19 +959,17 @@ void GoUctCommands::DisplayKnowledge(GtpCommand &cmd,
   std::vector<UctMoveInfo> moves;
   UctProvenType ignoreProvenType;
   state.GenerateAllMoves(count, moves, ignoreProvenType);
-  DisplayMoveInfo(cmd, moves, additiveKnowledge);
+  DisplayMoveInfo(cmd, moves);
 }
 
 void GoUctCommands::DisplayMoveInfo(GtpCommand &cmd,
-                                    const std::vector<UctMoveInfo> &moves,
-                                    bool additiveKnowledge) {
+                                    const std::vector<UctMoveInfo> &moves) {
   cmd << "INFLUENCE ";
   for (size_t i = 0; i < moves.size(); ++i) {
     GoMove move = moves[i].uct_move;
-    UctValueType value = additiveKnowledge ? moves[i].predictor_val
-                                           : moves[i].uct_value;
+    UctValueType value = moves[i].uct_value;
     value = UctSearch::InverseEval(value);
-    const bool show = additiveKnowledge || (moves[i].visit_count > 0);
+    const bool show = moves[i].visit_count > 0;
     if (show) {
       UctValueType scaledValue = value * 2 - 1;
       if (m_bd.ToPlay() != SG_BLACK)
@@ -988,14 +977,13 @@ void GoUctCommands::DisplayMoveInfo(GtpCommand &cmd,
       cmd << ' ' << GoWritePoint(move) << ' ' << scaledValue;
     }
   }
-  if (!additiveKnowledge) {
-    cmd << "\nLABEL ";
-    for (size_t i = 0; i < moves.size(); ++i) {
-      GoMove move = moves[i].uct_move;
-      const UctValueType count = moves[i].visit_count;
-      if (count > 0)
-        cmd << ' ' << GoWritePoint(move) << ' ' << count;
-    }
+
+  cmd << "\nLABEL ";
+  for (size_t i = 0; i < moves.size(); ++i) {
+    GoMove move = moves[i].uct_move;
+    const UctValueType count = moves[i].visit_count;
+    if (count > 0)
+      cmd << ' ' << GoWritePoint(move) << ' ' << count;
   }
   cmd << '\n';
 }

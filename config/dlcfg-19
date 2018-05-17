@@ -10,3 +10,10 @@ latestckinfosubpath=checkpoint/latestcheckpoint.info
 checkevalsubpath=checkpoint/checkpointevalresult.txt"
 
 checkdatasubpath=gonet-model/checkpoint
+
+meta_graph=bootstrap-ckpt.meta
+checkpoint=bootstrap-ckpt
+nn_input=feature_input
+nn_outputs=resnet/tower_0/policy_head/policy_predict:resnet/tower_0/value_head/reward_predict
+value_transform=0
+reuse_searchtree=true

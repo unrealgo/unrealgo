@@ -58,7 +58,6 @@ class GoUctGlobalSearchState
   bool WinTheGame();
   bool TrompTaylorPassWins();
   void CollectFeatures(char feature[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures);
-  void CollectFeatures(char feature[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures, int maxSteps);
   bool GenerateAllMoves(UctValueType count, std::vector<UctMoveInfo> &moves,
                         UctProvenType &provenType);
   void GenerateLegalMoves(std::vector<UctMoveInfo> &moves);
@@ -161,54 +160,43 @@ template<class POLICY>
 void GoUctGlobalSearchState<POLICY>::CollectFeatures(char features[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures) {
   const GoBoard &bd = Board();
   std::stack<GoMove> sequence;
-  SgBlackWhite currentPlayer = SgOppBW(bd.ToPlay());
-  for (int i = 0; i < numFeatures; i++) {
+  SgBlackWhite currentPlayer = bd.ToPlay();
+  SgBlackWhite oppColor = SgOppBW(currentPlayer);
+
+  int mapCount = (numFeatures-1)/2;
+  for (int i = 0; i < mapCount; i++) {
     for (GoBoard::Iterator it(bd); it; ++it) {
       GoPoint p = *it;
-      if (bd.GetColor(p) == currentPlayer)
-        features[i][GoPointUtil::Row(p) - 1][GoPointUtil::Col(p) - 1] = 1;
-      else
-        features[i][GoPointUtil::Row(p) - 1][GoPointUtil::Col(p) - 1] = 0;
+      int row = GoPointUtil::Row(p) - 1;
+      int col = GoPointUtil::Col(p) - 1;
+      if (bd.GetColor(p) == currentPlayer) {
+        features[2*i][row][col] = 1;
+        features[2*i+1][row][col] = 0;
+      } else if (bd.GetColor(p) == oppColor) {
+        features[2*i][row][col] = 0;
+        features[2*i+1][row][col] = 1;
+      } else {
+        features[2*i][row][col] = 0;
+        features[2*i+1][row][col] = 0;
+      }
     }
+
     GoMove lastMove = bd.GetLastMove();
     if (lastMove != GO_NULLMOVE) {
       sequence.push(lastMove);
       TakeBackInTree(1);
     }
   }
-  memset(features[numFeatures - 1], 1 - currentPlayer, (size_t) GO_MAX_ONBOARD);
 
-  while (!sequence.empty()) {
-    GoMove move = sequence.top();
-    Execute(move);
-    sequence.pop();
+  if (numFeatures == 17) {
+    memset(features[numFeatures - 1], 1-currentPlayer, (size_t) GO_MAX_ONBOARD);
+  } else {
+    memset(features[numFeatures-2], 0, (size_t)GO_MAX_ONBOARD*2);
+    if (currentPlayer == SG_BLACK)
+      memset(features[numFeatures - 2], 1, (size_t) GO_MAX_ONBOARD);
+    else
+      memset(features[numFeatures - 1], 1, (size_t) GO_MAX_ONBOARD);
   }
-}
-
-template<class POLICY>
-void GoUctGlobalSearchState<POLICY>::CollectFeatures(char features[][GO_MAX_SIZE][GO_MAX_SIZE], int numFeatures,
-                                                     int maxSteps) {
-  const GoBoard &bd = Board();
-  std::stack<GoMove> sequence;
-  SgBlackWhite currentPlayer = SgOppBW(bd.ToPlay());
-  for (int i = 0; i < numFeatures; i++) {
-    if (i < maxSteps) {
-      for (GoBoard::Iterator it(bd); it; ++it) {
-        GoPoint p = *it;
-        if (bd.GetColor(p) == currentPlayer)
-          features[i][GoPointUtil::Row(p) - 1][GoPointUtil::Col(p) - 1] = 1;
-        else
-          features[i][GoPointUtil::Row(p) - 1][GoPointUtil::Col(p) - 1] = 0;
-      }
-      GoMove lastMove = bd.GetLastMove();
-      if (lastMove != GO_NULLMOVE) {
-        sequence.push(lastMove);
-        TakeBackInTree(1);
-      }
-    } else
-      memset(features[i], 0, (size_t) GO_MAX_ONBOARD);
-  }
-  memset(features[numFeatures - 1], 1 - currentPlayer, (size_t) GO_MAX_ONBOARD);
 
   while (!sequence.empty()) {
     GoMove move = sequence.top();
@@ -334,11 +322,11 @@ void GoUctGlobalSearchState<POLICY>::GenerateLegalMoves(std::vector<UctMoveInfo>
         && !AllSafe(p)
         && bd.IsLegal(p, toPlay)
         )
-      moves.push_back(UctMoveInfo(p));
+      moves.emplace_back(UctMoveInfo(p));
   }
-  if (m_swapMoves && moves.size() > 1)
-    std::swap(moves[0], moves[m_random.SmallInt(moves.size())]);
-  moves.push_back(UctMoveInfo(GO_PASS));
+  /*if (m_swapMoves && moves.size() > 1)
+    std::swap(moves[0], moves[m_random.SmallInt(moves.size())]);*/
+  moves.emplace_back(UctMoveInfo(GO_PASS));
 }
 
 inline float invsqrt(float value) {
@@ -552,6 +540,9 @@ GoUctGlobalSearch<POLICY, FACTORY>::GoUctGlobalSearch(GoBoard &bd,
   SetThreadStateFactory(stateFactory);
   SetDefaultParameters(bd.Size());
   if (LockFree()) {
+#ifdef FORCE_SINGLE_THREAD
+    SetThreadsNumberOnly(1);
+#else
     unsigned int nuThreads = boost::thread::hardware_concurrency();
 #ifdef LIMIT_THREADS_TO_4
     if (nuThreads > 4)
@@ -560,6 +551,7 @@ GoUctGlobalSearch<POLICY, FACTORY>::GoUctGlobalSearch(GoBoard &bd,
     if (nuThreads > MAX_BATCHES)
       nuThreads = MAX_BATCHES;
     SetThreadsNumberOnly(nuThreads);
+#endif
   }
 }
 

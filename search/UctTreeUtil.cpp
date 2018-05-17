@@ -28,15 +28,6 @@ void UctTreeStatistics::Compute(const UctSearchTree &tree) {
       ++m_moveCounts[static_cast<size_t>(count)];
     if (!node.HasChildren())
       continue;
-    for (UctChildNodeIterator childIt(tree, node); childIt; ++childIt) {
-      const UctNode &child = *childIt;
-      if (child.HasRaveValue() && child.HasMean()) {
-        UctValueType childValue =
-            UctSearch::InverseEstimate(child.Mean());
-        UctValueType biasRave = child.RaveValue() - childValue;
-        m_biasRave.Add(biasRave);
-      }
-    }
   }
 }
 

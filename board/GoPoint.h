@@ -83,6 +83,7 @@ inline char Letter(int coord) {
 
 std::string ToString(GoPoint p);
 std::string ToString2(GoPoint p);
+std::string ToStringFull(GoPoint p);
 GoPoint Pt(int col, int row);
 
 class PointToRow {
